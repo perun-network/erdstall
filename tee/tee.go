@@ -28,18 +28,23 @@ type (
 		// Note that BalanceProofs requires an additional k blocks to be known to
 		// the Enclave before it reveals an epoch's balance proofs to the operator.
 		// k is a security parameter to guarantee enough PoW depth.
-		ProcessBlocks(...Block) error
+		ProcessBlocks(...*Block) error
 
 		// ProcessTXs should be called by the Operator whenever they receive new
 		// transactions from users. After a transaction epoch has finished and an
 		// additional k blocks made known to the Enclave, the epoch's balance proofs
 		// can be received by calling BalanceProofs.
-		ProcessTXs(...Transaction) error
+		ProcessTXs(...*Transaction) error
+
+		// DepositProof returns the deposit proof of all deposits made in the given
+		// epoch.
+		DepositProof(Epoch) (DepositProof, error)
 
 		// BalanceProofs returns the balance proofs of the given epoch. Note that
 		// all blocks of the epoch's transaction phase (+k) need to be known to the
-		// Enclave.
-		BalanceProofs(Epoch) ([]BalanceProof, error)
+		// Enclave. This call blocks until all necessary blocks are received and
+		// processed.
+		BalanceProofs(Epoch) ([]*BalanceProof, error)
 	}
 
 	// Epoch is the epoch counter type.
@@ -54,7 +59,11 @@ type (
 
 	// Transaction is a payment transaction from Sender to Recipient, signed by
 	// the Sender. The epoch must match the current transaction epoch.
+	//
+	// Nonce tracking allows to send multiple transactions per epoch, each only
+	// stating the amount of the individual transaction.
 	Transaction struct {
+		Nonce     uint64 // starts at 0, each tx must increase by one, across epochs
 		Epoch     Epoch
 		Sender    common.Address
 		Recipient common.Address
@@ -78,5 +87,13 @@ type (
 		Epoch   Epoch          // sol: uint64
 		Account common.Address // sol: address
 		Value   *big.Int       // sol: uint256
+	}
+
+	// A DepositProof states for which users deposits were made in the deposit
+	// phase and what their current balances are.
+	DepositProof struct {
+		Epoch    Epoch
+		Balances []*Balance
+		Sig      []byte
 	}
 )
