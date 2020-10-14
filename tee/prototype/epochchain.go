@@ -16,11 +16,26 @@ type epochchain struct {
 }
 
 func (ec *epochchain) Head() *Epoch {
+	ec.RLock()
+	defer ec.RUnlock()
+
 	if len(ec.epochs) == 0 {
 		return nil
 	}
 
 	return ec.epochs[len(ec.epochs)-1]
+}
+
+func (ec *epochchain) Epoch(n tee.Epoch) (*Epoch, bool) {
+	ec.RLock()
+	defer ec.RUnlock()
+
+	i := n - ec.offset
+	if i >= uint64(len(ec.epochs)) {
+		return nil, false
+	}
+
+	return ec.epochs[i], true
 }
 
 func (ec *epochchain) Push(e *Epoch) {
@@ -42,6 +57,9 @@ func (ec *epochchain) Push(e *Epoch) {
 }
 
 func (ec *epochchain) PruneUntil(n tee.Epoch) {
+	ec.Lock()
+	defer ec.Unlock()
+
 	if ec.offset > n {
 		return
 	}
