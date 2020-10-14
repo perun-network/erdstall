@@ -9,3 +9,5 @@ yarn-error.log
 /test/*.js
 package-lock.json
 coverage.json
+solc-static-linux
+/bindings/*.bin-runtime
