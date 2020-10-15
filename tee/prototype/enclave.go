@@ -59,14 +59,9 @@ func NewEnclave(wallet accounts.Wallet) *Enclave {
 }
 
 func NewEnclaveWithAccount(wallet accounts.Wallet, account accounts.Account) *Enclave {
-	return &Enclave{
-		wallet:        wallet,
-		account:       account,
-		newBlocks:     make(chan *tee.Block, bufSizeBlocks),
-		newTXs:        make(chan *tee.Transaction, bufSizeTXs),
-		depositProofs: make(chan []*tee.DepositProof, bufSizeProofs),
-		balanceProofs: make(chan []*tee.BalanceProof, bufSizeProofs),
-	}
+	e := NewEnclave(wallet)
+	e.account = account
+	return e
 }
 
 // Start starts the enclave routines and blocks until they return. It returns an
