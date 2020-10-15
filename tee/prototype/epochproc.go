@@ -2,7 +2,12 @@
 
 package prototype
 
-func (e *Enclave) epochProcessor() error {
+import "github.com/perun-network/erdstall/tee"
+
+func (e *Enclave) epochProcessor(
+	verifiedBlocks <-chan *tee.Block,
+	txs <-chan *tee.Transaction,
+) error {
 	var (
 		depositEpoch *Epoch
 		txEpoch      *Epoch
@@ -17,9 +22,9 @@ func (e *Enclave) epochProcessor() error {
 		// write new epoch to e.epochs
 	}
 
-	// read blocks from e.verifiedBlocks
-	// read tx from e.txs
+	// read blocks from verifiedBlocks
+	// read tx from txs
 	// extract deposits, adjust epoch's balances
 	// extract exits, adjust epoch's balances
-	// responsible for closing phase channels
+	// responsible for closing end-of-phase signalling channels
 }

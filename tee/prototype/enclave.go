@@ -17,10 +17,6 @@ type (
 
 		bc     blockchain // TODO: do we need? we process on the fly...
 		epochs epochchain
-
-		newBlocks      chan *tee.Block
-		verifiedBlocks chan *tee.Block
-		txs            chan *tee.Transaction
 	}
 
 	Parameters struct {

@@ -2,8 +2,13 @@
 
 package prototype
 
-func (e *Enclave) blockProcessor() error {
-	// read blocks from e.newBlocks
+import "github.com/perun-network/erdstall/tee"
+
+func (e *Enclave) blockProcessor(
+	newBlocks <-chan *tee.Block,
+	verifiedBlocks chan<- *tee.Block,
+) error {
+	// read blocks from newBlocks
 	// verify block chain
-	// write verified blocks (up to PoW-depth) to b.verifiedBlocks
+	// write verified blocks (up to PoW-depth) to verifiedBlocks
 }
