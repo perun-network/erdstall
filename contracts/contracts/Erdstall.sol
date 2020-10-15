@@ -182,6 +182,15 @@ contract Erdstall {
     }
 
     function verifyBalance(Balance memory balance, bytes memory sig) internal view {
-        require(Sig.verify(abi.encode(balance), sig, tee), "invalid signature");
+        require(Sig.verify(encodeBalanceProof(balance), sig, tee), "invalid signature");
+    }
+
+    function encodeBalanceProof(Balance memory balance) internal view returns (bytes memory) {
+        return abi.encode(
+            "ErdstallBalance",
+            address(this),
+            balance.epoch,
+            balance.account,
+            balance.value);
     }
 }
