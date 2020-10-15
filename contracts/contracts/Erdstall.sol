@@ -134,14 +134,30 @@ contract Erdstall {
     external onlyFrozen
     {
         verifyBalance(balance, sig);
+
+        _withdrawFrozen(balance.value);
+    }
+
+    // recoverDeposit should be called by a user if they deposited but never
+    // received a deposit or balance proof from the operator. They must have
+    // launched an unanswered challenge in the epoch's exit phase so that
+    // the contract can be frozen.
+    function recoverDeposit() external onlyFrozen {
+        _withdrawFrozen(0);
+    }
+
+    function _withdrawFrozen(uint256 _value) internal {
         require(!frozenWithdraws[frozenEpoch][msg.sender], "already withdrawn (frozen)");
 
-        uint256 value = deposits[frozenEpoch+1][msg.sender] // frozen deposit
-                        + balance.value;
+        uint256 value = _value + frozenDeposit();
         frozenWithdraws[frozenEpoch][msg.sender] = true;
 
         msg.sender.transfer(value);
         emit Withdrawn(frozenEpoch, msg.sender, value);
+    }
+
+    function frozenDeposit() internal view returns (uint256) {
+        return deposits[frozenEpoch+1][msg.sender];
     }
 
     function isLastEpochChallenged() internal view returns (bool) {
