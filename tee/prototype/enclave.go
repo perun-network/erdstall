@@ -11,18 +11,12 @@ import (
 
 type (
 	Enclave struct {
-		params  Parameters
+		params  tee.Parameters
 		wallet  accounts.Wallet
 		account accounts.Account
 
 		bc     blockchain // TODO: do we need? we process on the fly...
 		epochs epochchain
-	}
-
-	Parameters struct {
-		PowDepth      tee.Epoch // k from paper
-		PhaseDuration tee.Epoch // number of blocks of one phase (not epoch)
-		InitBlock     uint64    // block at which Erdstall contract was deployed
 	}
 )
 
@@ -62,21 +56,4 @@ func (e *Enclave) ProcessTXs(_ ...*tee.Transaction) error {
 // Enclave.
 func (e *Enclave) BalanceProofs(_ tee.Epoch) ([]tee.BalanceProof, error) {
 	panic("not implemented") // TODO: Implement
-}
-
-func (e *Enclave) depositEpoch(blockNum uint64) tee.Epoch {
-	return e.epoch(blockNum)
-}
-
-func (e *Enclave) txEpoch(blockNum uint64) tee.Epoch {
-	return e.epoch(blockNum) + 1
-}
-
-func (e *Enclave) exitEpoch(blockNum uint64) tee.Epoch {
-	return e.epoch(blockNum) + 2
-}
-
-// Don't use this, use the specific fooEpoch methods.
-func (e *Enclave) epoch(blockNum uint64) tee.Epoch {
-	return (blockNum - e.params.InitBlock) / e.params.PhaseDuration
 }
