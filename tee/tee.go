@@ -22,6 +22,11 @@ type (
 		// calling Init.
 		Init() (common.Address, []byte, error)
 
+		// SetParams should be called by the operator after they deployed the
+		// contract to set the system parameters, including the contract address.
+		// The Enclave verifies the parameters upon receival of the first block.
+		SetParams(Parameters) error
+
 		// ProcessBlocks should be called by the Operator to cause the enclave to
 		// process the given block(s), logging deposits and exits.
 		//
@@ -44,7 +49,7 @@ type (
 		// and processed.
 		//
 		// It should be called in a loop by the operator.
-		DepositProof() ([]*DepositProof, error)
+		DepositProofs() ([]*DepositProof, error)
 
 		// BalanceProofs returns all balance proofs at the end of each transaction
 		// phase.
