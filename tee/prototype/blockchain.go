@@ -35,6 +35,9 @@ func (b *blockchain) PushVerify(block *tee.Block) error {
 	}
 
 	// TODO(ND): verify block.Header.ParentHash matches Head()
+	if err := verifyBlock(block, b.Head()); err != nil {
+		return fmt.Errorf("verifying block: %v", err)
+	}
 
 	b.blocks = append(b.blocks, block)
 	return nil
