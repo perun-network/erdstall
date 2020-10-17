@@ -12,9 +12,10 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	err "perun.network/go-perun/pkg/errors"
+
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/tee"
-	err "perun.network/go-perun/pkg/errors"
 )
 
 func (e *Enclave) epochProcessor(
@@ -22,11 +23,11 @@ func (e *Enclave) epochProcessor(
 	txs <-chan *tee.Transaction,
 ) error {
 	var (
-		depositEpoch *Epoch = NewEpoch(tee.Epoch(0))
+		depositEpoch = NewEpoch(0)
 		txEpoch      *Epoch
 		exitEpoch    *Epoch
-		phaseShift   chan struct{}
-		errg         *err.Gatherer = err.NewGatherer()
+		phaseShift   = make(chan struct{})
+		errg         = err.NewGatherer()
 	)
 
 	for {
