@@ -17,10 +17,6 @@ type (
 		Number tee.Epoch
 
 		balances map[common.Address]Bal
-
-		depositDone chan struct{}
-		txDone      chan struct{}
-		exitDone    chan struct{}
 	}
 
 	Bal struct {
@@ -31,11 +27,8 @@ type (
 
 func NewEpoch(n tee.Epoch) *Epoch {
 	return &Epoch{
-		Number:      n,
-		balances:    make(map[common.Address]Bal),
-		depositDone: make(chan struct{}),
-		txDone:      make(chan struct{}),
-		exitDone:    make(chan struct{}),
+		Number:   n,
+		balances: make(map[common.Address]Bal),
 	}
 }
 

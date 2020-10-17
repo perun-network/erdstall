@@ -23,34 +23,37 @@ func (e *Enclave) epochProcessor(
 	txs <-chan *tee.Transaction,
 ) error {
 	var (
+		// TODO: handle nil tx/exit epoch
 		depositEpoch = NewEpoch(0)
 		txEpoch      *Epoch
 		exitEpoch    *Epoch
 		phaseShift   = make(chan struct{})
 		errg         = err.NewGatherer()
 	)
+	// push first epoch
+	e.epochs.Push(depositEpoch)
 
 	for {
 		select {
 		case <-e.quit:
 			return errg.Err()
 		default:
-			done := make(chan struct{})
+		}
+		done := make(chan struct{}) // TODO: change to exiters slice
 
-			errg.Go(func() error {
-				return e.depositExitRoutine(verifiedBlocks, done, depositEpoch, exitEpoch)
-			})
+		errg.Go(func() error {
+			return e.depositExitRoutine(verifiedBlocks, done, depositEpoch, exitEpoch)
+		})
 
-			errg.Go(func() error {
-				return e.txRoutine(phaseShift, done, txs, txEpoch)
-			})
+		errg.Go(func() error {
+			return e.txRoutine(phaseShift, done, txs, txEpoch)
+		})
 
-			select {
-			case <-phaseShift:
-				e.shiftEpochs(depositEpoch, txEpoch, exitEpoch)
-			case <-errg.Failed():
-				return errg.Err()
-			}
+		select {
+		case <-phaseShift:
+			e.shiftEpochs(&depositEpoch, &txEpoch, &exitEpoch)
+		case <-errg.Failed():
+			return errg.Err()
 		}
 	}
 }
@@ -68,6 +71,9 @@ func (e *Enclave) txRoutine(
 	for {
 		select {
 		case <-done:
+			// TODO: pass set of exiting users from exit processor here
+			//   then check that these users didn't perform txs. If they did, error for now now
+			//   Best would be to revert all sending and receiving transactions of exiters.
 			balProofs, err := e.generateBalanceProofs(txEpoch)
 			if err != nil {
 				return fmt.Errorf("generating balance proofs: %w", err)
@@ -75,8 +81,7 @@ func (e *Enclave) txRoutine(
 			e.balanceProofs <- balProofs
 			phaseShift <- struct{}{} // phase done, stop processing TXs and signal epoch shift.
 			return nil
-		default:
-			tx := <-txs
+		case tx := <-txs:
 			// extract tx-changes, adjust epoch's balances.
 			if err := e.adjustEpochTx(txEpoch, tx); err != nil {
 				// TODO: racing transactions.
@@ -90,7 +95,7 @@ func (e *Enclave) txRoutine(
 
 func (e *Enclave) depositExitRoutine(
 	verifiedBlocks <-chan *tee.Block,
-	phaseDone chan struct{},
+	phaseDone chan<- struct{},
 	depositEpoch, exitEpoch *Epoch,
 ) error {
 	// read blocks from verifiedBlocks (deposit phase).
@@ -122,7 +127,7 @@ func (e *Enclave) generateDepositProof(depEpoch *Epoch, acc common.Address) (*te
 	b := tee.Balance{
 		Epoch:   depEpoch.Number,
 		Account: acc,
-		Value:   depEpoch.balances[acc].Value,
+		Value:   new(big.Int).Set(depEpoch.balances[acc].Value),
 	}
 
 	msg, err := tee.EncodeDepositProof(e.params.Contract, b)
@@ -130,7 +135,7 @@ func (e *Enclave) generateDepositProof(depEpoch *Epoch, acc common.Address) (*te
 		return nil, fmt.Errorf("encoding deposit proof: %w", err)
 	}
 
-	sig, err := e.wallet.SignText(e.account, msg)
+	sig, err := e.wallet.SignText(e.account, crypto.Keccak256(msg))
 	if err != nil {
 		return nil, fmt.Errorf("signing deposit proof: %w", err)
 	}
@@ -145,6 +150,7 @@ func (e *Enclave) generateDepositProof(depEpoch *Epoch, acc common.Address) (*te
 // transaction Epoch.
 func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) ([]*tee.BalanceProof, error) {
 	balProofs := make([]*tee.BalanceProof, 0, len(txEpoch.balances))
+	// TODO: counter plox
 	for acc, bal := range txEpoch.balances {
 		b := tee.Balance{
 			Epoch:   txEpoch.Number,
@@ -156,7 +162,7 @@ func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) ([]*tee.BalanceProof, er
 			return nil, fmt.Errorf("encoding balance proof: %w", err)
 		}
 
-		sig, err := e.wallet.SignText(e.account, msg)
+		sig, err := e.wallet.SignText(e.account, crypto.Keccak256(msg))
 		if err != nil {
 			return nil, fmt.Errorf("signing balance proof: %w", err)
 		}
@@ -170,32 +176,25 @@ func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) ([]*tee.BalanceProof, er
 }
 
 // shiftEpochs shifts the given three epochs by one phase.
-func (e *Enclave) shiftEpochs(depositEpoch, txEpoch, exitEpoch *Epoch) {
-	close(depositEpoch.depositDone)
-	if txEpoch != nil {
-		close(txEpoch.txDone)
-	}
-	if exitEpoch != nil {
-		close(exitEpoch.exitDone)
-	}
-	exitEpoch = txEpoch
-	txEpoch = depositEpoch
-	depositEpoch = txEpoch.NewNext()
-	e.epochs.Push(depositEpoch)
+func (e *Enclave) shiftEpochs(depositEpoch, txEpoch, exitEpoch **Epoch) {
+	*exitEpoch = *txEpoch
+	*txEpoch = *depositEpoch
+	*depositEpoch = (*txEpoch).NewNext()
+	e.epochs.Push(*depositEpoch)
 }
 
 func (e *Enclave) phaseDone(blocknr uint64) bool {
-	return (blocknr % e.params.PhaseDuration) == 0
+	return (blocknr % e.params.PhaseDuration) == e.params.PhaseDuration-1
 }
 
 // handleVerifiedBlock receives a verified block and adjusts the transaction
 // Epoch as well as the exit Epoch.
-func (e *Enclave) handleVerifiedBlock(txEpoch, exitEpoch *Epoch, vb *tee.Block) error {
+func (e *Enclave) handleVerifiedBlock(depEpoch, exitEpoch *Epoch, vb *tee.Block) error {
 	for _, r := range vb.Receipts {
 		exLogs, depLogs := partition(r.Logs, logIsDepositEvt)
 		// extract deposits, adjust epoch's balances.
-		if err := e.adjustEpochDeposit(e.params.Contract, txEpoch, depLogs); err != nil {
-			return fmt.Errorf("adjusting Epoch %v Balances: %w", txEpoch.Number, err)
+		if err := e.adjustEpochDeposit(e.params.Contract, depEpoch, depLogs); err != nil {
+			return fmt.Errorf("adjusting Epoch %v Balances: %w", depEpoch.Number, err)
 		}
 		// extract exits, adjust epoch's balances.
 		if err := e.adjustEpochExit(exitEpoch, exLogs); err != nil {
@@ -239,8 +238,18 @@ func (e *Enclave) adjustEpochDeposit(contract common.Address, ep *Epoch, depLogs
 		if err != nil {
 			return fmt.Errorf("parsing withdraw event: %w", err)
 		}
-		accBal := ep.balances[deposit.Account].Value
-		accBal.Add(accBal, deposit.Value)
+		if accBal, ok := ep.balances[deposit.Account]; ok {
+			accBal.Value.Add(accBal.Value, deposit.Value)
+		} else {
+			ep.balances[deposit.Account] = Bal{
+				0,
+				new(big.Int).Set(deposit.Value),
+			}
+		}
+		if deposit.Epoch != ep.Number {
+			return fmt.Errorf("deposit-event Epoch %v != current deposit Epoch %v",
+				deposit.Epoch, ep.Number)
+		}
 
 		depProof, err := e.generateDepositProof(ep, deposit.Account)
 		if err != nil {
@@ -262,9 +271,16 @@ func (e *Enclave) adjustEpochExit(ep *Epoch, exLogs []*types.Log) error {
 			return fmt.Errorf("exit-event Epoch %v != current exit Epoch %v",
 				exit.Epoch, ep.Number)
 		}
+		// only full exits supported currently
 		accBal := ep.balances[exit.Account].Value
-		accBal.Sub(accBal, exit.Value)
+		if accBal.Cmp(exit.Value) != 0 {
+			return fmt.Errorf("unexpected partial exit for %v, expected %v", exit.Value, accBal)
+		}
+		accBal.SetUint64(0)
+		delete(ep.balances, exit.Account)
+		// add exit.Account to set of exiters ([]common.Address)
 	}
+
 	return nil
 }
 
@@ -276,14 +292,12 @@ type erdstallEvent struct {
 	Value   *big.Int
 }
 
+var contractAbi, _ = abi.JSON(strings.NewReader(bindings.ErdstallABI))
+
 // parseEvent parses a given `log` and returns an `erdstallEvent`.
 func parseEvent(l *types.Log, name string) (*erdstallEvent, error) {
-	contractAbi, err := abi.JSON(strings.NewReader(bindings.ErdstallABI))
-	if err != nil {
-		return nil, fmt.Errorf("creating contractAbi: %w", err)
-	}
-	var event *erdstallEvent
-	err = contractAbi.Unpack(event, name, l.Data)
+	event := new(erdstallEvent)
+	err := contractAbi.Unpack(event, name, l.Data)
 	if err != nil {
 		return nil, fmt.Errorf("unpacking %v : %w", name, err)
 	}
@@ -293,55 +307,41 @@ func parseEvent(l *types.Log, name string) (*erdstallEvent, error) {
 
 // adjustEpochTx adjusts `e.balances` according to given transactions.
 func (e *Enclave) adjustEpochTx(ep *Epoch, tx *tee.Transaction) error {
-	if err := validateTx(e.params, ep, tx); err != nil {
+	const LT = -1
 
-		// TODO: handle transactions coming in with the wrong epoch.
-		if err == mismatchedTxEpochErr {
-			return nil
-		}
-
-		return fmt.Errorf("validating tx: %w", err)
+	if valid, err := tee.VerifyTransaction(e.params, *tx); err != nil {
+		return fmt.Errorf("verifying tx signature: %w", err)
+	} else if !valid {
+		return fmt.Errorf("invalid tx signature")
 	}
 
-	from := ep.balances[tx.Sender]
-	to := ep.balances[tx.Recipient]
+	// TODO: cache future transaction until we process them
+	if tx.Epoch != ep.Number {
+		// TODO: log that we drop
+		return nil
+	}
 
-	from.Value.Sub(from.Value, tx.Amount)
-	to.Value.Add(to.Value, tx.Amount)
+	sender, oks := ep.balances[tx.Sender]
+	recipient, okr := ep.balances[tx.Recipient]
+	if !oks {
+		return fmt.Errorf("unknown sender: %x", tx.Sender)
+	}
+	if !okr {
+		return fmt.Errorf("unknown recipient: %x", tx.Recipient)
+	}
+	if sender.Value.Cmp(tx.Amount) == LT {
+		return fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
+	}
+	if tx.Nonce != sender.Nonce+1 {
+		return fmt.Errorf("comparing tx nonce: %v, sender nonce: %v",
+			tx.Nonce, sender.Nonce)
+	}
 
-	from.Nonce = tx.Nonce
-	to.Nonce = tx.Nonce
+	sender.Value.Sub(sender.Value, tx.Amount)
+	recipient.Value.Add(recipient.Value, tx.Amount)
+
+	sender.Nonce = tx.Nonce
 	return nil
 }
 
 var mismatchedTxEpochErr error = errors.New("mismatched Epochs for Tx")
-
-// validateTx validates a `tee.Transaction` and performs sanity checks.
-func validateTx(p tee.Parameters, e *Epoch, tx *tee.Transaction) error {
-	const LT = -1
-
-	valid, err := tee.VerifyTransaction(p, *tx)
-	if err != nil {
-		return fmt.Errorf("verifying tx signature: %w", err)
-	}
-	if !valid {
-		return fmt.Errorf("invalid tx signature")
-	}
-
-	if tx.Epoch != e.Number {
-		return mismatchedTxEpochErr
-	}
-
-	sender := e.balances[tx.Sender]
-	recipient := e.balances[tx.Recipient]
-	if sender.Value.Cmp(tx.Amount) == LT {
-		return fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
-	}
-
-	if tx.Nonce <= sender.Nonce || tx.Nonce <= recipient.Nonce {
-		return fmt.Errorf("comparing tx nonce: %v, sender nonce: %v, recipient nonce: %v",
-			tx.Nonce, sender.Nonce, recipient.Nonce)
-	}
-
-	return nil
-}

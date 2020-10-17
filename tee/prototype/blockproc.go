@@ -15,6 +15,10 @@ func (e *Enclave) blockProcessor(
 	// read blocks from newBlocks
 	k := e.params.PowDepth
 	for b := range newBlocks {
+		if e.bc.Len() == 0 && e.params.InitBlock != b.NumberU64() {
+			return fmt.Errorf("first block (%d) not initial Erdstall block(%d)", b.NumberU64(), e.params.InitBlock)
+		}
+
 		// verify block chain
 		if err := e.bc.PushVerify(b); err != nil {
 			return fmt.Errorf("pushing block to local blockchain: %w", err)
@@ -22,7 +26,6 @@ func (e *Enclave) blockProcessor(
 
 		// TODO: * Handle Reorgs...
 		//   * Receipts verification
-		//   * First block verification for `params`
 
 		// write verified block (up to PoW-depth) to verifiedBlocks
 		l := e.bc.Len()
