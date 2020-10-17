@@ -18,6 +18,10 @@ func (b *blockchain) Head() *tee.Block {
 	return b.blocks[len(b.blocks)-1]
 }
 
+func (b *blockchain) Len() uint64 {
+	return uint64(len(b.blocks))
+}
+
 // PushVerify pushes the block onto the chain, verifying that it is indeed a
 // correct next block.
 func (b *blockchain) PushVerify(block *tee.Block) error {
@@ -34,7 +38,6 @@ func (b *blockchain) PushVerify(block *tee.Block) error {
 		return fmt.Errorf("not next block, head: %d, block: %d", headNum, blockNum)
 	}
 
-	// TODO(ND): verify block.Header.ParentHash matches Head()
 	if err := verifyBlock(block, b.Head()); err != nil {
 		return fmt.Errorf("verifying block: %v", err)
 	}
@@ -52,4 +55,18 @@ func (b *blockchain) PruneUntil(blockNum uint64) {
 	diff := blockNum - b.offset
 	b.blocks = b.blocks[diff : len(b.blocks)-1]
 	b.offset = blockNum
+}
+
+// verifyBlock verifies that block is a valid next block after parent.
+func verifyBlock(block, parent *tee.Block) error {
+	bHash := block.Header().ParentHash
+	pHash := parent.Hash()
+
+	// TODO: Extend validation to test consensus (PoW).
+	//   This function then probably becomes a method on blockchain after we add a
+	//   consensus engine to blockchain.
+	if bHash != pHash {
+		return fmt.Errorf("parent header mismatch, expected %x, got: %x", pHash, bHash)
+	}
+	return nil
 }
