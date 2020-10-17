@@ -30,6 +30,9 @@ type (
 		depositProofs chan []*tee.DepositProof
 		balanceProofs chan []*tee.BalanceProof
 
+		// cache
+		depositProofCache map[common.Address]*tee.DepositProof
+
 		quit chan struct{} // stops all workers
 	}
 )
