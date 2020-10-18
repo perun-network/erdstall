@@ -3,27 +3,24 @@
 package prototype
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
-	"strings"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	err "perun.network/go-perun/pkg/errors"
 
-	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/tee"
 )
+
+// TODO: order function after call-stack please.
 
 func (e *Enclave) epochProcessor(
 	verifiedBlocks <-chan *tee.Block,
 	txs <-chan *tee.Transaction,
 ) error {
 	var (
-		// TODO: handle nil tx/exit epoch
 		depositEpoch = NewEpoch(0)
 		txEpoch      *Epoch
 		exitEpoch    *Epoch
@@ -39,7 +36,7 @@ func (e *Enclave) epochProcessor(
 			return errg.Err()
 		default:
 		}
-		done := make(chan struct{}) // TODO: change to exiters slice
+		done := make(chan exitersSet)
 
 		errg.Go(func() error {
 			return e.depositExitRoutine(verifiedBlocks, done, depositEpoch, exitEpoch)
@@ -58,54 +55,95 @@ func (e *Enclave) epochProcessor(
 	}
 }
 
+// TODO: racing transactions.
 func (e *Enclave) txRoutine(
-	phaseShift, done chan struct{},
+	phaseShift chan<- struct{},
+	exits <-chan exitersSet,
 	txs <-chan *tee.Transaction,
 	txEpoch *Epoch,
 ) error {
-	// read tx from txs (tx phase).
-	// TODO: let enclave generate all balance proofs beforehand and just update
-	//		 them for incoming transactions.
-	//		  -> Right now all balance proofs are generated when a txPhase is
-	//           done.
+	var stagedTxs txCache
 	for {
+		bpCache, err := e.generateBalanceProofs(txEpoch)
+		if err != nil {
+			return fmt.Errorf("generating balance proofs: %w", err)
+		}
 		select {
-		case <-done:
-			// TODO: pass set of exiting users from exit processor here
-			//   then check that these users didn't perform txs. If they did, error for now now
-			//   Best would be to revert all sending and receiving transactions of exiters.
-			balProofs, err := e.generateBalanceProofs(txEpoch)
+		case exiters := <-exits:
+			txEpoch, bpCache, ptxs := prune(txEpoch, stagedTxs, bpCache, exiters)
+			bpCache, err = e.applyEpochTx(txEpoch, ptxs, bpCache)
 			if err != nil {
-				return fmt.Errorf("generating balance proofs: %w", err)
+				return fmt.Errorf("adjusting Epoch %v Balances: %w", txEpoch.Number, err)
 			}
-			e.balanceProofs <- balProofs
+			e.balanceProofs <- getBalProofs(bpCache)
 			phaseShift <- struct{}{} // phase done, stop processing TXs and signal epoch shift.
 			return nil
 		case tx := <-txs:
-			// extract tx-changes, adjust epoch's balances.
-			if err := e.adjustEpochTx(txEpoch, tx); err != nil {
-				// TODO: racing transactions.
-				//		  && not synced with validated block-input.
-				//		  we cant error, else we shutdown the enclave!
-				return fmt.Errorf("adjusting Epoch %v Balances: %w", txEpoch.Number, err)
-			}
+			stagedTxs = cacheTx(stagedTxs, tx)
 		}
 	}
 }
 
+// getBalProofs retrieves a slice of `*tee.BalanceProof`s from the balance proof cache.
+func getBalProofs(bps balProofCache) []*tee.BalanceProof {
+	proofs := make([]*tee.BalanceProof, len(bps))
+	i := 0
+	for _, bp := range bps {
+		proofs[i] = bp
+	}
+	return proofs
+}
+
+// prune prunes a given slice of transactions for a given set of addresses, s.t.
+// no element of the given set is either a recipient or sender in a transaction,
+// it also makes sure to remove exited parties from the txEpoch and the
+// balance proof cache.
+func prune(epoch *Epoch,
+	txs txCache,
+	bpc balProofCache,
+	forS []common.Address,
+) (*Epoch, balProofCache, []*tee.Transaction) {
+	for _, m := range forS {
+		delete(epoch.balances, m) // remove member from txEpoch
+		delete(bpc, m)            // remove member from balProofCache
+
+		sTxs, sOk := txs.senders[m]
+		rTxs, rOk := txs.recipients[m]
+		if !sOk && !rOk {
+			continue
+		}
+		for _, tx := range sTxs {
+			delete(txs.txs, tx.Hash())
+		}
+		for _, tx := range rTxs {
+			delete(txs.txs, tx.Hash())
+		}
+	}
+	prunedTxs := make([]*tee.Transaction, 0, len(txs.txs))
+	i := 0
+	for _, tx := range txs.txs {
+		prunedTxs[i] = tx
+	}
+	return epoch, bpc, prunedTxs
+}
+
+type balProofCache = map[common.Address]*tee.BalanceProof
+
 func (e *Enclave) depositExitRoutine(
 	verifiedBlocks <-chan *tee.Block,
-	phaseDone chan<- struct{},
+	phaseDone chan<- exitersSet,
 	depositEpoch, exitEpoch *Epoch,
 ) error {
 	// read blocks from verifiedBlocks (deposit phase).
 	for vb := range verifiedBlocks {
-		if err := e.handleVerifiedBlock(depositEpoch, exitEpoch, vb); err != nil {
+		exiters, err := e.handleVerifiedBlock(depositEpoch, exitEpoch, vb)
+		if err != nil {
 			return fmt.Errorf("handling verified blocknr %v : %w", vb.NumberU64(), err)
 		}
 		if e.phaseDone(vb.NumberU64()) {
 			e.depositProofs <- retrieveCachedDepProofs(e.depositProofCache)
 			e.depositProofCache = make(map[common.Address]*tee.DepositProof)
+			phaseDone <- exiters
 			close(phaseDone) // phase done, stop TX processor.
 			return nil
 		}
@@ -113,6 +151,7 @@ func (e *Enclave) depositExitRoutine(
 	return nil
 }
 
+// retrieveCachedDepProofs reduces the deposit proof cache to a slice of `tee.DepositProof`s.
 func retrieveCachedDepProofs(cache map[common.Address]*tee.DepositProof) []*tee.DepositProof {
 	dps := make([]*tee.DepositProof, 0, len(cache))
 	for _, dp := range cache {
@@ -146,33 +185,66 @@ func (e *Enclave) generateDepositProof(depEpoch *Epoch, acc common.Address) (*te
 	}, nil
 }
 
+// updateBalanceProofs updates the balance proof cache with for given transaction.
+func (e *Enclave) updateBalanceProofs(bpc balProofCache, ep *Epoch, sender, recipient common.Address) (balProofCache, error) {
+	sBp := bpc[sender]
+	rBp := bpc[recipient]
+	sBp.Balance.Value = sBp.Balance.Value.Set(ep.balances[sender].Value)
+	rBp.Balance.Value = rBp.Balance.Value.Set(ep.balances[recipient].Value)
+
+	sBp, err := e.signBalanceProof(sBp.Balance)
+	if err != nil {
+		return nil, fmt.Errorf("updating balance proof for %v", sender.String())
+	}
+	rBp, err = e.signBalanceProof(rBp.Balance)
+	if err != nil {
+		return nil, fmt.Errorf("updating balance proof for %v", recipient.String())
+	}
+
+	bpc[sender] = sBp
+	bpc[recipient] = rBp
+
+	return bpc, nil
+}
+
 // generateBalanceProofs generates the balance proofs for all users in the given
 // transaction Epoch.
-func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) ([]*tee.BalanceProof, error) {
-	balProofs := make([]*tee.BalanceProof, 0, len(txEpoch.balances))
-	// TODO: counter plox
+func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) (balProofCache, error) {
+	balProofs := make(balProofCache)
+	i := 0
 	for acc, bal := range txEpoch.balances {
 		b := tee.Balance{
 			Epoch:   txEpoch.Number,
 			Account: acc,
 			Value:   bal.Value,
 		}
-		msg, err := tee.EncodeBalanceProof(e.params.Contract, b)
-		if err != nil {
-			return nil, fmt.Errorf("encoding balance proof: %w", err)
-		}
 
-		sig, err := e.wallet.SignText(e.account, crypto.Keccak256(msg))
+		bp, err := e.signBalanceProof(b)
 		if err != nil {
-			return nil, fmt.Errorf("signing balance proof: %w", err)
+			return nil, fmt.Errorf("generating balance proofs: %w", err)
 		}
-
-		balProofs = append(balProofs, &tee.BalanceProof{
-			Balance: b,
-			Sig:     sig,
-		})
+		balProofs[acc] = bp
+		i++
 	}
 	return balProofs, nil
+}
+
+// signBalanceProof signs the given `tee.Balance` and returns a `tee.BalanceProof`
+// containing the corresponding signature w.r.t. the enclave.
+func (e *Enclave) signBalanceProof(b tee.Balance) (*tee.BalanceProof, error) {
+	msg, err := tee.EncodeBalanceProof(e.params.Contract, b)
+	if err != nil {
+		return nil, fmt.Errorf("encoding balance proof: %w", err)
+	}
+
+	sig, err := e.wallet.SignText(e.account, crypto.Keccak256(msg))
+	if err != nil {
+		return nil, fmt.Errorf("signing balance proof: %w", err)
+	}
+	return &tee.BalanceProof{
+		Balance: b,
+		Sig:     sig,
+	}, nil
 }
 
 // shiftEpochs shifts the given three epochs by one phase.
@@ -189,19 +261,22 @@ func (e *Enclave) phaseDone(blocknr uint64) bool {
 
 // handleVerifiedBlock receives a verified block and adjusts the transaction
 // Epoch as well as the exit Epoch.
-func (e *Enclave) handleVerifiedBlock(depEpoch, exitEpoch *Epoch, vb *tee.Block) error {
+func (e *Enclave) handleVerifiedBlock(depEpoch, exitEpoch *Epoch, vb *tee.Block) (exitersSet, error) {
+	var exiters exitersSet
 	for _, r := range vb.Receipts {
 		exLogs, depLogs := partition(r.Logs, logIsDepositEvt)
 		// extract deposits, adjust epoch's balances.
-		if err := e.adjustEpochDeposit(e.params.Contract, depEpoch, depLogs); err != nil {
-			return fmt.Errorf("adjusting Epoch %v Balances: %w", depEpoch.Number, err)
+		if err := e.applyEpochDeposit(e.params.Contract, depEpoch, depLogs); err != nil {
+			return nil, fmt.Errorf("adjusting Epoch %v Balances: %w", depEpoch.Number, err)
 		}
 		// extract exits, adjust epoch's balances.
-		if err := e.adjustEpochExit(exitEpoch, exLogs); err != nil {
-			return fmt.Errorf("handling exit of Epoch %v: %w", exitEpoch.Number, err)
+		exits, err := e.applyEpochExit(exitEpoch, exLogs)
+		if err != nil {
+			return nil, fmt.Errorf("handling exit of Epoch %v: %w", exitEpoch.Number, err)
 		}
+		exiters = append(exiters, exits...)
 	}
-	return nil
+	return exiters, nil
 }
 
 type noPredLogs = []*types.Log
@@ -221,20 +296,11 @@ func partition(ls []*types.Log, pred func(l *types.Log) bool) (predLogs, noPredL
 	return depLogs, exLogs
 }
 
-// TODO: rephrase, Go doesn't allow for complex global consts.
-var depositedEvent common.Hash = crypto.Keccak256Hash([]byte("Deposited(uint64,address,uint256)"))
-
-var exitingEvent common.Hash = crypto.Keccak256Hash([]byte("Exiting(uint64,address,uint256)"))
-
-func logIsDepositEvt(l *types.Log) bool {
-	return l.Topics[0].String() == depositedEvent.String()
-}
-
-// adjustEpochDeposit adjusts `e.balances` according to the deposits done in
+// applyEpochDeposit adjusts `e.balances` according to the deposits done in
 // the given block.
-func (e *Enclave) adjustEpochDeposit(contract common.Address, ep *Epoch, depLogs []*types.Log) error {
+func (e *Enclave) applyEpochDeposit(contract common.Address, ep *Epoch, depLogs []*types.Log) error {
 	for _, depLog := range depLogs {
-		deposit, err := parseEvent(depLog, "Deposited")
+		deposit, err := parseDepEvent(depLog)
 		if err != nil {
 			return fmt.Errorf("parsing withdraw event: %w", err)
 		}
@@ -260,88 +326,72 @@ func (e *Enclave) adjustEpochDeposit(contract common.Address, ep *Epoch, depLogs
 	return nil
 }
 
-// adjustEpochExit handles the exit phase of given Epoch.
-func (e *Enclave) adjustEpochExit(ep *Epoch, exLogs []*types.Log) error {
+// exitersSet is the set of exiting participants.
+type exitersSet []common.Address
+
+// applyEpochExit handles the exit phase of given Epoch.
+func (e *Enclave) applyEpochExit(ep *Epoch, exLogs []*types.Log) (exitersSet, error) {
+	exiters := make(exitersSet, 0)
 	for _, exLog := range exLogs {
-		exit, err := parseEvent(exLog, "Exiting")
+		exit, err := parseExitEvent(exLog)
 		if err != nil {
-			return fmt.Errorf("parsing exiting event: %w", err)
+			return nil, fmt.Errorf("parsing exiting event: %w", err)
 		}
 		if exit.Epoch != ep.Number {
-			return fmt.Errorf("exit-event Epoch %v != current exit Epoch %v",
+			return nil, fmt.Errorf("exit-event Epoch %v != current exit Epoch %v",
 				exit.Epoch, ep.Number)
 		}
 		// only full exits supported currently
 		accBal := ep.balances[exit.Account].Value
 		if accBal.Cmp(exit.Value) != 0 {
-			return fmt.Errorf("unexpected partial exit for %v, expected %v", exit.Value, accBal)
+			return nil, fmt.Errorf("unexpected partial exit for %v, expected %v", exit.Value, accBal)
 		}
 		accBal.SetUint64(0)
 		delete(ep.balances, exit.Account)
-		// add exit.Account to set of exiters ([]common.Address)
+		exiters = append(exiters, exit.Account)
 	}
 
-	return nil
+	return exiters, nil
 }
 
-// erdstallEvent is a generic wrapper type for `Deposited`, `Exiting` and
-// `Withdrawn` solidity events.
-type erdstallEvent struct {
-	Epoch   uint64
-	Account common.Address
-	Value   *big.Int
-}
-
-var contractAbi, _ = abi.JSON(strings.NewReader(bindings.ErdstallABI))
-
-// parseEvent parses a given `log` and returns an `erdstallEvent`.
-func parseEvent(l *types.Log, name string) (*erdstallEvent, error) {
-	event := new(erdstallEvent)
-	err := contractAbi.Unpack(event, name, l.Data)
-	if err != nil {
-		return nil, fmt.Errorf("unpacking %v : %w", name, err)
-	}
-
-	return event, nil
-}
-
-// adjustEpochTx adjusts `e.balances` according to given transactions.
-func (e *Enclave) adjustEpochTx(ep *Epoch, tx *tee.Transaction) error {
+// applyEpochTx adjusts `e.balances` according to given transactions.
+func (e *Enclave) applyEpochTx(ep *Epoch, txs []*tee.Transaction, bpc balProofCache) (balProofCache, error) {
 	const LT = -1
 
-	if valid, err := tee.VerifyTransaction(e.params, *tx); err != nil {
-		return fmt.Errorf("verifying tx signature: %w", err)
-	} else if !valid {
-		return fmt.Errorf("invalid tx signature")
-	}
+	for _, tx := range txs {
+		if valid, err := tee.VerifyTransaction(e.params, *tx); err != nil {
+			return nil, fmt.Errorf("verifying tx signature: %w", err)
+		} else if !valid {
+			return nil, fmt.Errorf("invalid tx signature")
+		}
 
-	// TODO: cache future transaction until we process them
-	if tx.Epoch != ep.Number {
-		// TODO: log that we drop
-		return nil
-	}
+		if tx.Epoch != ep.Number {
+			// TODO: log that we drop
+			return nil, nil
+		}
 
-	sender, oks := ep.balances[tx.Sender]
-	recipient, okr := ep.balances[tx.Recipient]
-	if !oks {
-		return fmt.Errorf("unknown sender: %x", tx.Sender)
-	}
-	if !okr {
-		return fmt.Errorf("unknown recipient: %x", tx.Recipient)
-	}
-	if sender.Value.Cmp(tx.Amount) == LT {
-		return fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
-	}
-	if tx.Nonce != sender.Nonce+1 {
-		return fmt.Errorf("comparing tx nonce: %v, sender nonce: %v",
-			tx.Nonce, sender.Nonce)
-	}
+		sender, oks := ep.balances[tx.Sender]
+		recipient, okr := ep.balances[tx.Recipient]
+		if !oks {
+			return nil, fmt.Errorf("unknown sender: %x", tx.Sender)
+		}
+		if !okr {
+			return nil, fmt.Errorf("unknown recipient: %x", tx.Recipient)
+		}
+		if sender.Value.Cmp(tx.Amount) == LT {
+			return nil, fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
+		}
+		if tx.Nonce != sender.Nonce+1 {
+			return nil, fmt.Errorf("comparing tx nonce: %v, sender nonce: %v",
+				tx.Nonce, sender.Nonce)
+		}
 
-	sender.Value.Sub(sender.Value, tx.Amount)
-	recipient.Value.Add(recipient.Value, tx.Amount)
+		sender.Value.Sub(sender.Value, tx.Amount)
+		recipient.Value.Add(recipient.Value, tx.Amount)
 
-	sender.Nonce = tx.Nonce
-	return nil
+		sender.Nonce = tx.Nonce
+
+		e.updateBalanceProofs(bpc, ep, tx.Sender, tx.Recipient)
+	}
+	return nil, nil
 }
-
-var mismatchedTxEpochErr error = errors.New("mismatched Epochs for Tx")
