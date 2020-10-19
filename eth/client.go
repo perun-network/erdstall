@@ -68,6 +68,10 @@ func NewClientForWallet(
 	return NewClient(cb, acc.Account), nil
 }
 
+func (cl *Client) Account() accounts.Account {
+	return cl.account
+}
+
 // SubscribeToBlocks subscribes the client to the mined Ethereum blocks.
 func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
 	headers := make(chan *types.Header)
