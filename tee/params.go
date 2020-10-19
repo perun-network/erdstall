@@ -19,17 +19,17 @@ func (p Parameters) DepositEpoch(blockNum uint64) Epoch {
 }
 
 // TxEpoch returns the transaction epoch at the given block number.
-func (p Parameters) TxEpoch(params Parameters, blockNum uint64) Epoch {
+func (p Parameters) TxEpoch(blockNum uint64) Epoch {
 	return p.epoch(blockNum) + 1
 }
 
 // ExitEpoch returns the exit epoch at the given block number.
-func (p Parameters) ExitEpoch(params Parameters, blockNum uint64) Epoch {
+func (p Parameters) ExitEpoch(blockNum uint64) Epoch {
 	return p.epoch(blockNum) + 2
 }
 
 // FreezingEpoch returns the freezing epoch at the given block number.
-func (p Parameters) FreezingEpoch(params Parameters, blockNum uint64) Epoch {
+func (p Parameters) FreezingEpoch(blockNum uint64) Epoch {
 	return p.epoch(blockNum) + 3
 }
 
