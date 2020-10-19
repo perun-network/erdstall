@@ -3,6 +3,7 @@
 package prototype
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -34,7 +35,7 @@ func (e *Enclave) epochProcessor(
 	for {
 		select {
 		case <-e.quit:
-			return errg.Err()
+			return errg.Wait()
 		default:
 		}
 		done := make(chan exitersSet)
@@ -122,7 +123,7 @@ func (e *Enclave) depositExitRoutine(
 			return nil
 		}
 	}
-	return nil
+	return errors.New("depositExitRoutine: verifiedBlocks channel closed")
 }
 
 // asDepProofs reduces the deposit proof cache to a slice of `tee.DepositProof`s.
