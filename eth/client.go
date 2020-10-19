@@ -20,13 +20,15 @@ import (
 	"github.com/perun-network/erdstall/tee"
 )
 
-const defaultGasLimit = 2000000
+const (
+	defaultGasLimit = 2000000
+	defaultPowDepth = 0
+)
 
 type (
 	// Client is an Ethereum client to interact with the Erdstall contract.
 	Client struct {
-		peruneth.ContractInterface
-		tr      peruneth.Transactor
+		peruneth.ContractBackend
 		account accounts.Account
 	}
 
@@ -39,11 +41,10 @@ type (
 
 // NewClient creates a new Erdstall Ethereum client.
 func NewClient(
-	ci peruneth.ContractInterface,
-	tr peruneth.Transactor,
+	cb peruneth.ContractBackend,
 	a accounts.Account,
 ) *Client {
-	return &Client{ci, tr, a}
+	return &Client{cb, a}
 }
 
 // NewClientForWallet returns a new Client using the given wallet as transactor.
@@ -62,8 +63,9 @@ func NewClientForWallet(
 		return nil, fmt.Errorf("deriving account: %w", err)
 	}
 	tr := perunhd.NewTransactor(hdw)
+	cb := peruneth.NewContractBackend(ci, tr)
 
-	return NewClient(ci, tr, acc.Account), nil
+	return NewClient(cb, acc.Account), nil
 }
 
 // SubscribeToBlocks subscribes the client to the mined Ethereum blocks.
@@ -108,6 +110,44 @@ func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
 	return &BlockSubscription{sub, blocks}, nil
 }
 
+// SubscribeToDeposited writes past Deposited events and newly received ones
+// into the sink. The `epochs` and `accs` arguments can be used to filter for
+// specific events. Passing `nil` will skip the filtering.
+// Should be started in a go-routine, since it blocks.
+// Can be cancelled via context.
+func (cl *Client) SubscribeToDeposited(ctx context.Context, contract *bindings.Erdstall, epochs []uint64, accs []common.Address, sink chan *bindings.ErdstallDeposited) error {
+	// sub to new events
+	wOpts, err := cl.NewWatchOpts(ctx)
+	if err != nil {
+		return err
+	}
+	sub, err := contract.WatchDeposited(wOpts, sink, epochs, accs)
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+	// filter past events
+	fOpts, err := cl.NewFilterOpts(ctx)
+	if err != nil {
+		return err
+	}
+	it, err := contract.FilterDeposited(fOpts, epochs, accs)
+	defer it.Close()
+	if err != nil {
+		return err
+	}
+	for it.Next() {
+		sink <- it.Event
+	}
+	// Wait for error or ctx done.
+	select {
+	case err := <-sub.Err():
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // BlockByHash returns the block for the given block hash together with the block's transaction receipts.
 func (cl *Client) BlockByHash(ctx context.Context, hash common.Hash) (*tee.Block, error) {
 	block, err := cl.ContractInterface.BlockByHash(ctx, hash)
@@ -127,32 +167,6 @@ func (cl *Client) BlockByHash(ctx context.Context, hash common.Hash) (*tee.Block
 	return &tee.Block{Block: *block, Receipts: receipts}, nil
 }
 
-// NewTransactor creates a new transactor.
-func (cl *Client) NewTransactor(ctx context.Context, gasLimit uint64) (*bind.TransactOpts, error) {
-	// Determine nonce
-	nonce, err := cl.NextNonce(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("determining nonce: %w", err)
-	}
-
-	// Determine gas price
-	gasPrice, err := cl.SuggestGasPrice(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("determining gas price: %w", err)
-	}
-
-	auth, err := cl.tr.NewTransactor(cl.account)
-	if err != nil {
-		return nil, fmt.Errorf("creating transactor: %w", err)
-	}
-	auth.Nonce = new(big.Int).SetUint64(nonce)
-	auth.Value = big.NewInt(0)
-	auth.GasLimit = gasLimit
-	auth.GasPrice = gasPrice
-
-	return auth, nil
-}
-
 // NextNonce returns the next Ethereum nonce.
 func (cl *Client) NextNonce(ctx context.Context) (uint64, error) {
 	nonce, err := cl.PendingNonceAt(ctx, cl.account.Address)
@@ -169,9 +183,9 @@ func (cl *Client) DeployContracts(params *tee.Parameters) error {
 	ctx, cancel := NewDefaultContext()
 	defer cancel()
 
-	tr, err := cl.NewTransactor(ctx, defaultGasLimit)
+	tr, err := cl.NewTransactor(ctx, big.NewInt(0), defaultGasLimit, cl.account)
 	if err != nil {
-		return fmt.Errorf("creating keyed transactor: %w", err)
+		return fmt.Errorf("creating transactor: %w", err)
 	}
 
 	address, tx, _, err := bindings.DeployErdstall(tr,
@@ -196,6 +210,38 @@ func (cl *Client) DeployContracts(params *tee.Parameters) error {
 	params.InitBlock = receipt.BlockNumber.Uint64()
 
 	return nil
+}
+
+func (cl *Client) BindContract(ctx context.Context, addr common.Address) (*tee.Parameters, *bindings.Erdstall, error) {
+	contract, err := bindings.NewErdstall(addr, cl.ContractInterface)
+	if err != nil {
+		return nil, nil, err
+	}
+	opts := &bind.CallOpts{Context: ctx}
+	phaseDuration, err := contract.PhaseDuration(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	responseDuration, err := contract.ResponseDuration(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	bigBang, err := contract.BigBang(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	teeAddr, err := contract.Tee(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &tee.Parameters{
+		PowDepth:         defaultPowDepth,
+		PhaseDuration:    phaseDuration,
+		ResponseDuration: responseDuration,
+		InitBlock:        bigBang,
+		TEE:              teeAddr,
+		Contract:         addr,
+	}, contract, nil
 }
 
 // Blocks returns the channel on which to receive subscribed blocks.
