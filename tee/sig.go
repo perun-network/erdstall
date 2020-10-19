@@ -5,6 +5,7 @@ package tee
 import (
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"perun.network/go-perun/backend/ethereum/wallet"
 )
 
@@ -24,10 +25,10 @@ func VerifyBalanceProof(params Parameters, proof BalanceProof) (bool, error) {
 	return wallet.VerifySignature(msg, proof.Sig, (*wallet.Address)(&params.TEE))
 }
 
-func VerifyTransaction(params Parameters, tx Transaction) (bool, error) {
-	msg, err := EncodeTransaction(params.Contract, tx)
+func VerifyTransaction(contract common.Address, tx Transaction) (bool, error) {
+	msg, err := EncodeTransaction(contract, tx)
 	if err != nil {
 		return false, fmt.Errorf("encoding tx: %w", err)
 	}
-	return wallet.VerifySignature(msg, tx.Sig, (*wallet.Address)(&params.TEE))
+	return wallet.VerifySignature(msg, tx.Sig, (*wallet.Address)(&tx.Sender))
 }

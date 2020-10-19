@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	defaultGasLimit = 2000000
+	DefaultGasLimit = 2000000
 	defaultPowDepth = 0
 )
 
@@ -66,6 +66,10 @@ func NewClientForWallet(
 	cb := peruneth.NewContractBackend(ci, tr)
 
 	return NewClient(cb, acc.Account), nil
+}
+
+func (cl *Client) Account() accounts.Account {
+	return cl.account
 }
 
 // SubscribeToBlocks subscribes the client to the mined Ethereum blocks.
@@ -183,7 +187,7 @@ func (cl *Client) DeployContracts(params *tee.Parameters) error {
 	ctx, cancel := NewDefaultContext()
 	defer cancel()
 
-	tr, err := cl.NewTransactor(ctx, big.NewInt(0), defaultGasLimit, cl.account)
+	tr, err := cl.NewTransactor(ctx, big.NewInt(0), DefaultGasLimit, cl.account)
 	if err != nil {
 		return fmt.Errorf("creating transactor: %w", err)
 	}
