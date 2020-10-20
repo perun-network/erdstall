@@ -4,7 +4,6 @@ package prototype
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -59,6 +58,17 @@ func NewEnclave(wallet accounts.Wallet) *Enclave {
 	}
 }
 
+func NewEnclaveWithAccount(wallet accounts.Wallet, account accounts.Account) *Enclave {
+	return &Enclave{
+		wallet:        wallet,
+		account:       account,
+		newBlocks:     make(chan *tee.Block, bufSizeBlocks),
+		newTXs:        make(chan *tee.Transaction, bufSizeTXs),
+		depositProofs: make(chan []*tee.DepositProof, bufSizeProofs),
+		balanceProofs: make(chan []*tee.BalanceProof, bufSizeProofs),
+	}
+}
+
 // Start starts the enclave routines and blocks until they return. It returns an
 // error gatherer of all errors that the routines return, if any.
 //
@@ -104,8 +114,7 @@ func (e *Enclave) Stop() {
 // calling Init.
 func (e *Enclave) Init() (tee common.Address, _ []byte, err error) {
 	if e.account.Address != tee {
-		err = fmt.Errorf("account already created (%x)", e.account.Address)
-		return
+		return e.account.Address, nil, nil
 	}
 	e.account, err = e.wallet.Derive(accounts.DefaultRootDerivationPath, true)
 	if err != nil {
