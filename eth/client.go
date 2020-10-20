@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 	log "github.com/sirupsen/logrus"
 	peruneth "perun.network/go-perun/backend/ethereum/channel"
 	perunhd "perun.network/go-perun/backend/ethereum/wallet/hd"
@@ -48,6 +49,18 @@ func NewClient(
 	return &Client{cb, a}
 }
 
+// NewClientForWalletAndAccount creates a new Erdstall Ethereum client for the
+// given wallet and account.
+func NewClientForWalletAndAccount(
+	ci peruneth.ContractInterface,
+	w accounts.Wallet,
+	a accounts.Account,
+) *Client {
+	tr := NewDefaultTransactor(w)
+	cb := peruneth.NewContractBackend(ci, tr)
+	return &Client{cb, a}
+}
+
 // NewClientForWallet returns a new Client using the given wallet as transactor.
 // The first account is derived from the wallet and used as the account in the
 // client.
@@ -67,6 +80,15 @@ func NewClientForWallet(
 	cb := peruneth.NewContractBackend(ci, tr)
 
 	return NewClient(cb, acc.Account), nil
+}
+
+// CreateEthereumClient creates and connects a new ethereum client.
+func CreateEthereumClient(url string, wallet accounts.Wallet, a accounts.Account) (*Client, error) {
+	ethClient, err := ethclient.Dial(url)
+	if err != nil {
+		return nil, fmt.Errorf("dialing ethereum: %w", err)
+	}
+	return NewClientForWalletAndAccount(ethClient, wallet, a), nil
 }
 
 func (cl *Client) Account() accounts.Account {
