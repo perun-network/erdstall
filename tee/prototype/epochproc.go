@@ -10,7 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"perun.network/go-perun/log"
+	log "github.com/sirupsen/logrus"
 	perrors "perun.network/go-perun/pkg/errors"
 
 	"github.com/perun-network/erdstall/tee"
@@ -69,7 +69,7 @@ func (e *Enclave) txRoutine(
 		select {
 		case exiters := <-exits:
 			if err := noInconsistentExits(stagedTxs, exiters); err != nil {
-				log.Errorf("handling exiters: %w", err)
+				log.Errorf("handling exiters: %v", err)
 			}
 			bps, err := e.generateBalanceProofs(txEpoch)
 			if err != nil {
@@ -165,6 +165,11 @@ func (e *Enclave) generateDepositProof(depEpoch *Epoch, acc common.Address) (*te
 // generateBalanceProofs generates the balance proofs for all users in the given
 // transaction Epoch.
 func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) ([]*tee.BalanceProof, error) {
+	if txEpoch == nil {
+		// during the very first phase of the first epoch, there is no tx phase
+		return nil, nil
+	}
+
 	balProofs := make([]*tee.BalanceProof, len(txEpoch.balances))
 	i := 0
 	for acc, bal := range txEpoch.balances {
@@ -219,7 +224,9 @@ func (e *Enclave) phaseDone(blocknr uint64) bool {
 func (e *Enclave) handleVerifiedBlock(depEpoch, exitEpoch *Epoch, vb *tee.Block) (exitersSet, error) {
 	var exiters exitersSet
 	for _, r := range vb.Receipts {
-		exLogs, depLogs := partition(r.Logs, logIsDepositEvt)
+		logss := e.filterLogs(r.Logs, []logPredicate{logIsDepositEvt, logIsExitEvt})
+		depLogs, exLogs := logss[0], logss[1]
+		log.WithField("blockNum", vb.Block.NumberU64()).Tracef("Deposits: %v\nExits: %v", depLogs, exLogs)
 		// extract deposits, adjust epoch's balances.
 		if err := e.applyEpochDeposit(e.params.Contract, depEpoch, depLogs); err != nil {
 			return nil, fmt.Errorf("adjusting Epoch %v Balances: %w", depEpoch.Number, err)
@@ -234,21 +241,23 @@ func (e *Enclave) handleVerifiedBlock(depEpoch, exitEpoch *Epoch, vb *tee.Block)
 	return exiters, nil
 }
 
-type noPredLogs = []*types.Log
-type predLogs = []*types.Log
-
-// partition partitions a given slice of `*types.Log` into a slice where `pred`
-// holds and vice versa.
-func partition(ls []*types.Log, pred func(l *types.Log) bool) (predLogs, noPredLogs) {
-	var depLogs, exLogs []*types.Log
-	for _, l := range ls {
-		if pred(l) {
-			depLogs = append(depLogs, l)
-		} else {
-			exLogs = append(exLogs, l)
+// filterLogs partitions logs into different buckets of matching predicates.
+// Only logs from the Erdstall contract are filtered and other logs, as well as
+// those without a matching predicate, are discarded.
+func (e *Enclave) filterLogs(logs []*types.Log, preds []logPredicate) [][]*types.Log {
+	logss := make([][]*types.Log, len(preds))
+	for _, l := range logs {
+		if l.Address != e.params.Contract {
+			// only parse Erdstall logs
+			continue
+		}
+		for i, p := range preds {
+			if p(l) {
+				logss[i] = append(logss[i], l)
+			}
 		}
 	}
-	return depLogs, exLogs
+	return logss
 }
 
 // applyEpochDeposit adjusts `e.balances` according to the deposits done in
