@@ -97,8 +97,8 @@ func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
 				return
 			case header := <-headers:
 				log.WithFields(log.Fields{
-					"num":  header.Number.Uint64(),
-					"hash": header.Hash().Hex()}).
+					"blockNum": header.Number.Uint64(),
+					"hash":     header.Hash().Hex()}).
 					Debugf("EthClient: New header.")
 
 				ctx, cancel := NewDefaultContext()
