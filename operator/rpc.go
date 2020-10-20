@@ -44,33 +44,3 @@ func (e *RemoteEnclave) GetBalanceProof(user common.Address, _bp *tee.BalancePro
 
 	return nil
 }
-
-// type mockEnclave struct{}
-
-// func (e *mockEnclave) Init() (common.Address, []byte, error) {
-// 	return common.Address{}, []byte{}, nil
-// }
-
-// func (e *mockEnclave) SetParams(p tee.Parameters) error {
-// 	return nil
-// }
-
-// func (e *mockEnclave) ProcessBlocks(...*tee.Block) error {
-// 	time.Sleep(1 * time.Second)
-// 	return nil
-// }
-
-// func (e *mockEnclave) ProcessTXs(...*tee.Transaction) error {
-// 	time.Sleep(1 * time.Second)
-// 	return nil
-// }
-
-// func (e *mockEnclave) DepositProofs() ([]*tee.DepositProof, error) {
-// 	time.Sleep(1 * time.Second)
-// 	return []*tee.DepositProof{}, nil
-// }
-
-// func (e *mockEnclave) BalanceProofs() ([]*tee.BalanceProof, error) {
-// 	time.Sleep(1 * time.Second)
-// 	return []*tee.BalanceProof{}, nil
-// }
