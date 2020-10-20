@@ -3,6 +3,7 @@
 package prototype
 
 import (
+	"errors"
 	"fmt"
 
 	log "github.com/sirupsen/logrus"
@@ -16,30 +17,31 @@ func (e *Enclave) blockProcessor(
 ) error {
 	k := e.params.PowDepth
 	log.Debug("blockProc: starting...")
-	for {
-		select {
-		case b := <-newBlocks:
-			if e.bc.Len() == 0 && e.params.InitBlock != b.NumberU64() {
-				return fmt.Errorf("first block (%d) not initial Erdstall block (%d)", b.NumberU64(), e.params.InitBlock)
-			}
+	for b := range newBlocks {
+		if e.bc.Len() == 0 && e.params.InitBlock != b.NumberU64() {
+			return fmt.Errorf("first block (%d) not initial Erdstall block (%d)", b.NumberU64(), e.params.InitBlock)
+		}
 
-			// verify block chain
-			if err := e.bc.PushVerify(b); err != nil {
-				return fmt.Errorf("pushing block to local blockchain: %w", err)
-			}
+		// verify block chain
+		if err := e.bc.PushVerify(b); err != nil {
+			return fmt.Errorf("pushing block to local blockchain: %w", err)
+		}
 
-			// TODO: * Handle Reorgs...
-			//   * Receipts verification
+		// TODO: * Handle Reorgs...
+		//   * Receipts verification
 
-			// write verified block (up to PoW-depth) to verifiedBlocks
-			l := e.bc.Len()
-			if l > k {
-				vblock := e.bc.blocks[l-k-1]
-				log.WithField("blockNum", vblock.NumberU64()).Trace("blockProc: forwarding block to epochProc")
-				verifiedBlocks <- vblock
+		// write verified block (up to PoW-depth) to verifiedBlocks
+		l := e.bc.Len()
+		if l > k {
+			vblock := e.bc.blocks[l-k-1]
+			log.WithField("blockNum", vblock.NumberU64()).Trace("blockProc: forwarding block to epochProc")
+			verifiedBlocks <- vblock
+			if e.params.IsLastPhaseBlock(vblock.NumberU64()) && !e.running.IsSet() {
+				// graceful shutdown
+				log.Info("blockProc: last verified phase block forwarded, shutting down")
+				return nil
 			}
-		case <-e.quit:
-			return nil
 		}
 	}
+	return errors.New("blockProc: newBlocks channel closed")
 }
