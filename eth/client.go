@@ -114,7 +114,12 @@ func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
 		for {
 			select {
 			case err := <-sub.Err():
-				log.Errorf("EthClient: Header subscription error: %v", err)
+				if err != nil {
+					log.Errorf("EthClient: Header subscription error: %v", err)
+				} else {
+					log.Debug("EthClient: Header subscription closed")
+				}
+				close(blocks)
 				sub.Unsubscribe()
 				return
 			case header := <-headers:
