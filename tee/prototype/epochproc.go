@@ -27,21 +27,15 @@ func (e *Enclave) epochProcessor(
 		depositEpoch = NewEpoch(0)
 		txEpoch      *Epoch
 		exitEpoch    *Epoch
-		errg         = perrors.NewGatherer()
 	)
 	// push first epoch
 	e.epochs.Push(depositEpoch)
 
 	for {
 		log := log.WithField("depositEpoch", depositEpoch.Number)
+		errg := perrors.NewGatherer()
 
-		select {
-		case <-e.quit:
-			log.Info("epochProcessor: quit")
-			return errg.Wait()
-		default:
-		}
-		log.Info("epochProcessor: Starting new phase")
+		log.Info("epochProcessor: starting new phase")
 
 		done := make(chan exitersSet)
 		errg.Go(func() error {
@@ -55,6 +49,12 @@ func (e *Enclave) epochProcessor(
 		log.Debug("epochProcessor: waiting for depositExitRoutine and txRoutine...")
 		if err := errg.Wait(); err != nil {
 			return err
+		}
+
+		if !e.running.IsSet() {
+			log.Info("epochProcessor: routines returned, shutting down")
+			close(e.done) // signal to external callers that Enclave processes are done.
+			return nil
 		}
 
 		log.Debug("epochProcessor: routines returned, shifting epochs")
@@ -133,14 +133,17 @@ func (e *Enclave) depositExitRoutine(
 		exiters = append(exiters, exs...)
 		if e.params.IsLastPhaseBlock(vb.NumberU64()) {
 			log.Debug("depositExitRoutine: last block of phase, pushing deposit proofs and return")
-			e.depositProofs <- asDepProofs(e.depositProofCache)
-			e.depositProofCache = make(map[common.Address]*tee.DepositProof)
-			phaseDone <- exiters
-			close(phaseDone) // phase done, stop TX processor.
+			e.pushDepositProofs()
+			phaseDone <- exiters // phase done, sending exiters to TX processor.
 			return nil
 		}
 	}
 	return errors.New("depositExitRoutine: verifiedBlocks channel closed")
+}
+
+func (e *Enclave) pushDepositProofs() {
+	e.depositProofs <- asDepProofs(e.depositProofCache)
+	e.depositProofCache = make(map[common.Address]*tee.DepositProof)
 }
 
 // asDepProofs reduces the deposit proof cache to a slice of `tee.DepositProof`s.

@@ -4,6 +4,7 @@ package prototype
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -44,20 +45,24 @@ func TestEnclave(t *testing.T) {
 	defer sub.Unsubscribe()
 	t.Log("Subscribed to new blocks")
 
-	// Start mini-operator
-	ct := test.NewConcurrent(t)
-	go ct.StageN("operator", 2, func(t test.ConcT) {
-		for b := range sub.Blocks() {
-			require.NoError(t, enc.ProcessBlocks(b))
-		}
-	})
-
 	requiree.NoError(operator.DeployContracts(&params))
 	requiree.NoError(enc.SetParams(params))
 
+	ct := test.NewConcurrent(t)
 	// Start enclave routines
 	go ct.StageN("operator", 2, func(t test.ConcT) {
 		assert.NoError(enc.Start())
+	})
+
+	// Start mini-operator
+	go ct.StageN("operator", 2, func(t test.ConcT) {
+		for b := range sub.Blocks() {
+			err := enc.ProcessBlocks(b)
+			if errors.Is(err, ErrEnclaveStopped) {
+				return
+			}
+			require.NoError(t, err)
+		}
 	})
 
 	// Create clients
@@ -95,6 +100,11 @@ func TestEnclave(t *testing.T) {
 	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(5)))
 	requiree.NoError(bob.Send(aliceAd.Address, eth.EthToWeiInt(10)))
 
+	// Signalling the enclave to stop now, so that it doesn't start new epochs on
+	// the next block.
+	t.Log("Set Enclave to shutdown after next phase.")
+	enc.Stop()
+
 	t.Log("Adding 3 new blocks to seal next phase.")
 
 	for i := uint64(0); i < params.PhaseDuration; i++ {
@@ -117,7 +127,5 @@ func TestEnclave(t *testing.T) {
 	}
 
 	sub.Unsubscribe()
-	t.Log("Stopping Enclave.")
-	enc.Stop()
 	ct.Wait("operator")
 }

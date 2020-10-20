@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	perrors "perun.network/go-perun/pkg/errors"
+	"perun.network/go-perun/pkg/sync/atomic"
 
 	"github.com/perun-network/erdstall/tee"
 )
@@ -32,7 +33,8 @@ type (
 		// cache
 		depositProofCache map[common.Address]*tee.DepositProof
 
-		quit chan struct{} // stops all workers
+		running atomic.Bool   // if false, signals processors to return after sealing epoch
+		done    chan struct{} // signal by processors that they're done
 	}
 )
 
@@ -40,9 +42,9 @@ var _ (tee.Enclave) = (*Enclave)(nil) // compile-time check
 
 const (
 	// TODO: do we even want buffering? It may also be ok if ProcessX calls block.
-	bufSizeBlocks = 10  // incoming blocks buffer size
-	bufSizeTXs    = 256 // incoming tx buffer size
-	bufSizeProofs = 1   // proofs buffer size in #epochs
+	bufSizeBlocks = 0 // incoming blocks buffer size
+	bufSizeTXs    = 0 // incoming tx buffer size
+	bufSizeProofs = 1 // proofs buffer size in #epochs
 )
 
 var ErrEnclaveStopped = errors.New("Enclave stopped")
@@ -55,6 +57,7 @@ func NewEnclave(wallet accounts.Wallet) *Enclave {
 		depositProofs:     make(chan []*tee.DepositProof, bufSizeProofs),
 		balanceProofs:     make(chan []*tee.BalanceProof, bufSizeProofs),
 		depositProofCache: make(map[common.Address]*tee.DepositProof),
+		done:              make(chan struct{}),
 	}
 }
 
@@ -69,12 +72,12 @@ func NewEnclaveWithAccount(wallet accounts.Wallet, account accounts.Account) *En
 //
 // Start must be called after Init and SetParams.
 //
-// Start can be stopped by calling Stop.
+// Start can be stopped by calling Stop. However, Start will process blocks and
+// transactions until the current phase has finished.
 func (e *Enclave) Start() error {
-	if e.quit != nil {
+	if !e.running.TrySet() {
 		panic("Enclave already running")
 	}
-	e.quit = make(chan struct{})
 
 	var (
 		verifiedBlocks = make(chan *tee.Block, bufSizeBlocks) // connects the block and epoch processors
@@ -91,11 +94,16 @@ func (e *Enclave) Start() error {
 	return errg.Wait()
 }
 
-// Stop stops the enclave routines started with Start. Panics if called on a not
-// running Enclave.
+// Stop lets the Enclave gracefully shutdown after the next phase is sealed. It
+// will continue receiving transactions and blocks until the last block of the
+// current phase is received via ProcessBlocks.
+//
+// The Enclave Interface methods will return an ErrEnclaveStopped error after
+// the Enclave shut down.
 func (e *Enclave) Stop() {
-	close(e.quit)
-	e.quit = nil
+	if !e.running.TryUnset() {
+		panic("Enclave not running")
+	}
 }
 
 // Init initializes the enclave, generating a new secp256k1 ECDSA key and
@@ -138,8 +146,8 @@ func (e *Enclave) SetParams(p tee.Parameters) error {
 func (e *Enclave) ProcessBlocks(blocks ...*tee.Block) error {
 	for _, b := range blocks {
 		select {
-		case e.newBlocks <- b: // just continue
-		case <-e.quit:
+		case e.newBlocks <- b:
+		case <-e.done:
 			return ErrEnclaveStopped
 		}
 	}
@@ -153,8 +161,8 @@ func (e *Enclave) ProcessBlocks(blocks ...*tee.Block) error {
 func (e *Enclave) ProcessTXs(txs ...*tee.Transaction) error {
 	for _, tx := range txs {
 		select {
-		case e.newTXs <- tx: // just continue
-		case <-e.quit:
+		case e.newTXs <- tx:
+		case <-e.done:
 			return ErrEnclaveStopped
 		}
 	}
@@ -171,9 +179,9 @@ func (e *Enclave) ProcessTXs(txs ...*tee.Transaction) error {
 // It should be called in a loop by the operator.
 func (e *Enclave) DepositProofs() ([]*tee.DepositProof, error) {
 	select {
-	case p := <-e.depositProofs:
-		return p, nil
-	case <-e.quit:
+	case dps := <-e.depositProofs:
+		return dps, nil
+	case <-e.done:
 		return nil, ErrEnclaveStopped
 	}
 }
@@ -188,9 +196,9 @@ func (e *Enclave) DepositProofs() ([]*tee.DepositProof, error) {
 // It should be called in a loop by the operator.
 func (e *Enclave) BalanceProofs() ([]*tee.BalanceProof, error) {
 	select {
-	case p := <-e.balanceProofs:
-		return p, nil
-	case <-e.quit:
+	case bps := <-e.balanceProofs:
+		return bps, nil
+	case <-e.done:
 		return nil, ErrEnclaveStopped
 	}
 }
