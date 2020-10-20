@@ -50,11 +50,12 @@ var ErrEnclaveStopped = errors.New("Enclave stopped")
 
 func NewEnclave(wallet accounts.Wallet) *Enclave {
 	return &Enclave{
-		wallet:        wallet,
-		newBlocks:     make(chan *tee.Block, bufSizeBlocks),
-		newTXs:        make(chan *tee.Transaction, bufSizeTXs),
-		depositProofs: make(chan []*tee.DepositProof, bufSizeProofs),
-		balanceProofs: make(chan []*tee.BalanceProof, bufSizeProofs),
+		wallet:            wallet,
+		newBlocks:         make(chan *tee.Block, bufSizeBlocks),
+		newTXs:            make(chan *tee.Transaction, bufSizeTXs),
+		depositProofs:     make(chan []*tee.DepositProof, bufSizeProofs),
+		balanceProofs:     make(chan []*tee.BalanceProof, bufSizeProofs),
+		depositProofCache: make(map[common.Address]*tee.DepositProof),
 	}
 }
 
@@ -106,7 +107,7 @@ func (e *Enclave) Init() (tee common.Address, _ []byte, err error) {
 		err = fmt.Errorf("account already created (%x)", e.account.Address)
 		return
 	}
-	e.account, err = e.wallet.Derive(accounts.DefaultRootDerivationPath, false)
+	e.account, err = e.wallet.Derive(accounts.DefaultRootDerivationPath, true)
 	if err != nil {
 		return
 	}

@@ -10,29 +10,33 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
+
 	"github.com/perun-network/erdstall/contracts/bindings"
 )
 
-var depositedEvent common.Hash = crypto.Keccak256Hash([]byte("Deposited(uint64,address,uint256)"))
+var (
+	contractAbi, _ = abi.JSON(strings.NewReader(bindings.ErdstallABI))
+	depositedEvent = contractAbi.Events["Deposited"].ID
+	exitingEvent   = contractAbi.Events["Exiting"].ID
+)
 
-var exitingEvent common.Hash = crypto.Keccak256Hash([]byte("Exiting(uint64,address,uint256)"))
+type (
+	// erdstallDepEvent is a generic wrapper type for `Deposited` events.
+	erdstallDepEvent struct {
+		Epoch   uint64
+		Account common.Address
+		Value   *big.Int
+	}
 
-// erdstallDepEvent is a generic wrapper type for `Deposited` events.
-type erdstallDepEvent struct {
-	Epoch   uint64
-	Account common.Address
-	Value   *big.Int
-}
+	// erdstallDepEvent is wrapper type for `Exiting` events.
+	erdstallExitEvent struct {
+		Epoch   uint64
+		Account common.Address
+		Value   *big.Int
+	}
 
-// erdstallDepEvent is wrapper type for `Exiting` events.
-type erdstallExitEvent struct {
-	Epoch   uint64
-	Account common.Address
-	Value   *big.Int
-}
-
-var contractAbi, _ = abi.JSON(strings.NewReader(bindings.ErdstallABI))
+	logPredicate = func(l *types.Log) bool
+)
 
 // parseDepEvent parses a given `log` and returns an `erdstallEvent`.
 func parseDepEvent(l *types.Log) (*erdstallDepEvent, error) {
@@ -60,4 +64,8 @@ func parseExitEvent(l *types.Log) (*erdstallExitEvent, error) {
 
 func logIsDepositEvt(l *types.Log) bool {
 	return l.Topics[0].String() == depositedEvent.String()
+}
+
+func logIsExitEvt(l *types.Log) bool {
+	return l.Topics[0].String() == exitingEvent.String()
 }

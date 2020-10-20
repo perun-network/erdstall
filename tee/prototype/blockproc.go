@@ -5,6 +5,8 @@ package prototype
 import (
 	"fmt"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/perun-network/erdstall/tee"
 )
 
@@ -13,6 +15,7 @@ func (e *Enclave) blockProcessor(
 	verifiedBlocks chan<- *tee.Block,
 ) error {
 	k := e.params.PowDepth
+	log.Debug("blockProc: starting...")
 	for {
 		select {
 		case b := <-newBlocks:
@@ -31,7 +34,9 @@ func (e *Enclave) blockProcessor(
 			// write verified block (up to PoW-depth) to verifiedBlocks
 			l := e.bc.Len()
 			if l > k {
-				verifiedBlocks <- e.bc.blocks[l-k]
+				vblock := e.bc.blocks[l-k-1]
+				log.WithField("blockNum", vblock.NumberU64()).Trace("blockProc: forwarding block to epochProc")
+				verifiedBlocks <- vblock
 			}
 		case <-e.quit:
 			return nil
