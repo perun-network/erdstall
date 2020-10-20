@@ -36,6 +36,7 @@ type (
 	BlockSubscription struct {
 		sub    ethereum.Subscription
 		blocks chan *tee.Block
+		quit   chan struct{}
 	}
 )
 
@@ -85,33 +86,46 @@ func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
 		return nil, fmt.Errorf("subscribing to blockchain head: %w", err)
 	}
 
+	quit := make(chan struct{})
+
 	go func() {
 		for {
 			select {
 			case err := <-sub.Err():
-				log.Errorf("Header subscription error: %v", err)
+				log.Errorf("EthClient: Header subscription error: %v", err)
 				sub.Unsubscribe()
 				return
 			case header := <-headers:
 				log.WithFields(log.Fields{
 					"num":  header.Number.Uint64(),
 					"hash": header.Hash().Hex()}).
-					Debugf("New header. Num %x", header.Hash().Hex())
+					Debugf("EthClient: New header.")
 
 				ctx, cancel := NewDefaultContext()
 
 				block, err := cl.BlockByHash(ctx, header.Hash())
+				cancel()
 				if err != nil {
-					log.Errorf("Error retrieving block: %v", err)
+					log.Errorf("EthClient: Error retrieving block: %v", err)
 				}
 
-				cancel()
-				blocks <- block
+				select {
+				case blocks <- block:
+				case <-quit:
+					close(blocks)
+					log.Debug("EthClient: subscription closed")
+					return
+				}
+
+			case <-quit:
+				close(blocks)
+				log.Debug("EthClient: subscription closed")
+				return
 			}
 		}
 	}()
 
-	return &BlockSubscription{sub, blocks}, nil
+	return &BlockSubscription{sub, blocks, quit}, nil
 }
 
 // SubscribeToDeposited writes past Deposited events and newly received ones
@@ -255,8 +269,8 @@ func (sub *BlockSubscription) Blocks() <-chan *tee.Block { return sub.blocks }
 func (sub *BlockSubscription) Unsubscribe() {
 	sub.sub.Unsubscribe()
 	select {
-	case <-sub.blocks: // already closed
+	case <-sub.quit: // already closed
 	default:
-		close(sub.blocks)
+		close(sub.quit)
 	}
 }
