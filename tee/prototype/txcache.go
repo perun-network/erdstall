@@ -4,6 +4,7 @@ package prototype
 
 import (
 	"github.com/ethereum/go-ethereum/common"
+
 	"github.com/perun-network/erdstall/tee"
 )
 
@@ -12,8 +13,15 @@ type txCache struct {
 	recipients map[common.Address][]*tee.Transaction
 }
 
+func makeTxCache() txCache {
+	return txCache{
+		senders:    make(map[common.Address][]*tee.Transaction),
+		recipients: make(map[common.Address][]*tee.Transaction),
+	}
+}
+
 // cacheTx caches the given transaction.
-func (txc *txCache) cacheTx(tx *tee.Transaction) *txCache {
+func (txc *txCache) cacheTx(tx *tee.Transaction) {
 	sender := tx.Sender
 	recipient := tx.Recipient
 
@@ -27,6 +35,4 @@ func (txc *txCache) cacheTx(tx *tee.Transaction) *txCache {
 	rTxs := txc.recipients[recipient]
 	sTxs = append(sTxs, tx)
 	rTxs = append(rTxs, tx)
-
-	return txc
 }

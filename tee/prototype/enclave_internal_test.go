@@ -36,7 +36,8 @@ func TestEnclave(t *testing.T) {
 
 	// Setup blockchain and accounts
 	setup := eth.NewSimSetup(rng, 3) // 1 Operator + 2 Clients
-	operator := eth.NewClient(*setup.CB, setup.Accounts[0])
+	operatorAd, aliceAd, bobAd := setup.Accounts[0], setup.Accounts[1], setup.Accounts[2]
+	operator := eth.NewClient(*setup.CB, operatorAd)
 
 	sub, err := operator.SubscribeToBlocks()
 	requiree.NoError(err)
@@ -45,7 +46,7 @@ func TestEnclave(t *testing.T) {
 
 	// Start mini-operator
 	ct := test.NewConcurrent(t)
-	go ct.Stage("operator", func(t test.ConcT) {
+	go ct.StageN("operator", 2, func(t test.ConcT) {
 		for b := range sub.Blocks() {
 			require.NoError(t, enc.ProcessBlocks(b))
 		}
@@ -54,20 +55,69 @@ func TestEnclave(t *testing.T) {
 	requiree.NoError(operator.DeployContracts(&params))
 	requiree.NoError(enc.SetParams(params))
 
+	// Start enclave routines
+	go ct.StageN("operator", 2, func(t test.ConcT) {
+		assert.NoError(enc.Start())
+	})
+
 	// Create clients
-	encTr := &cltest.EnclaveTransactor{enc} // transact directly on the enclave, bypassing the operator
-	aliceEthCl := eth.NewClient(*setup.CB, setup.Accounts[1])
+	encTr := &cltest.EnclaveTransactor{Enclave: enc} // transact directly on the enclave, bypassing the operator
+	aliceEthCl := eth.NewClient(*setup.CB, aliceAd)
 	alice, err := cltest.NewClient(params, setup.HdWallet, aliceEthCl, encTr)
-	bobEthCl := eth.NewClient(*setup.CB, setup.Accounts[2])
+	bobEthCl := eth.NewClient(*setup.CB, bobAd)
 	bob, err := cltest.NewClient(params, setup.HdWallet, bobEthCl, encTr)
 
 	// Do deposits
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	requiree.NoError(alice.Deposit(ctx, eth.EthToWeiInt(1)))
-	requiree.NoError(bob.Deposit(ctx, eth.EthToWeiInt(1)))
+	requiree.NoError(alice.Deposit(ctx, eth.EthToWeiInt(100)))
+	requiree.NoError(bob.Deposit(ctx, eth.EthToWeiInt(100)))
+	alice.UpdateLastBlockNum()
 	t.Log("Deposits made!")
 
+	dps, err := enc.DepositProofs()
+	requiree.NoError(err)
+	assert.Len(dps, 2)
+	for _, dp := range dps {
+		ok, err := tee.VerifyDepositProof(params, *dp)
+		requiree.True(ok)
+		requiree.NoError(err)
+	}
+
+	bps, err := enc.BalanceProofs()
+	requiree.NoError(err)
+	assert.Len(bps, 0)
+
+	// now: deposit epoch: 1, tx epoch: 0
+
+	t.Log("Sending two TXs.")
+
+	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(5)))
+	requiree.NoError(bob.Send(aliceAd.Address, eth.EthToWeiInt(10)))
+
+	t.Log("Adding 3 new blocks to seal next phase.")
+
+	for i := uint64(0); i < params.PhaseDuration; i++ {
+		setup.SimBackend.Commit()
+	}
+
+	t.Log("Getting deposit proofs.")
+	dps, err = enc.DepositProofs()
+	requiree.NoError(err)
+	assert.Len(dps, 0)
+
+	t.Log("Getting balance proofs.")
+	bps, err = enc.BalanceProofs()
+	requiree.NoError(err)
+	assert.Len(bps, 2)
+	for _, bp := range bps {
+		ok, err := tee.VerifyBalanceProof(params, *bp)
+		requiree.True(ok)
+		requiree.NoError(err)
+	}
+
 	sub.Unsubscribe()
+	t.Log("Stopping Enclave.")
+	enc.Stop()
 	ct.Wait("operator")
 }

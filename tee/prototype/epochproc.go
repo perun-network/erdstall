@@ -13,6 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	perrors "perun.network/go-perun/pkg/errors"
 
+	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 )
 
@@ -26,60 +27,71 @@ func (e *Enclave) epochProcessor(
 		depositEpoch = NewEpoch(0)
 		txEpoch      *Epoch
 		exitEpoch    *Epoch
-		phaseShift   = make(chan struct{})
 		errg         = perrors.NewGatherer()
 	)
 	// push first epoch
 	e.epochs.Push(depositEpoch)
 
 	for {
+		log := log.WithField("depositEpoch", depositEpoch.Number)
+
 		select {
 		case <-e.quit:
+			log.Info("epochProcessor: quit")
 			return errg.Wait()
 		default:
 		}
-		done := make(chan exitersSet)
+		log.Info("epochProcessor: Starting new phase")
 
+		done := make(chan exitersSet)
 		errg.Go(func() error {
 			return e.depositExitRoutine(verifiedBlocks, done, depositEpoch, exitEpoch)
 		})
 
 		errg.Go(func() error {
-			return e.txRoutine(phaseShift, done, txs, txEpoch)
+			return e.txRoutine(done, txs, txEpoch)
 		})
 
-		select {
-		case <-phaseShift:
-			e.shiftEpochs(&depositEpoch, &txEpoch, &exitEpoch)
-		case <-errg.Failed():
-			return errg.Err()
+		log.Debug("epochProcessor: waiting for depositExitRoutine and txRoutine...")
+		if err := errg.Wait(); err != nil {
+			return err
 		}
+
+		log.Debug("epochProcessor: routines returned, shifting epochs")
+		e.shiftEpochs(&depositEpoch, &txEpoch, &exitEpoch)
 	}
 }
 
 // TODO: racing transactions.
 func (e *Enclave) txRoutine(
-	phaseShift chan<- struct{},
 	exits <-chan exitersSet,
 	txs <-chan *tee.Transaction,
 	txEpoch *Epoch,
 ) error {
-	var stagedTxs *txCache
+	log := log.WithField("epoch", "<not started>")
+	if txEpoch != nil {
+		log = log.WithField("epoch", txEpoch.Number)
+	}
 	for {
+		stagedTxs := makeTxCache()
 		select {
 		case exiters := <-exits:
-			if err := noInconsistentExits(stagedTxs, exiters); err != nil {
+			log.Trace("txRoutine: exiters received")
+			if err := noInconsistentExits(&stagedTxs, exiters); err != nil {
 				log.Errorf("handling exiters: %v", err)
 			}
 			bps, err := e.generateBalanceProofs(txEpoch)
 			if err != nil {
 				return fmt.Errorf("generating balance proofs: %w", err)
 			}
+
+			log.Debug("txRoutine: tx phase done, pushing balance proofs")
 			e.balanceProofs <- bps
-			phaseShift <- struct{}{} // phase done, stop processing TXs and signal epoch shift.
+
+			log.Trace("txRoutine: return")
 			return nil
 		case tx := <-txs:
-			stagedTxs = stagedTxs.cacheTx(tx)
+			stagedTxs.cacheTx(tx)
 			err := e.applyEpochTx(txEpoch, tx)
 			if err != nil {
 				return fmt.Errorf("adjusting Epoch %v Balances: %w", txEpoch.Number, err)
@@ -109,13 +121,18 @@ func (e *Enclave) depositExitRoutine(
 	phaseDone chan<- exitersSet,
 	depositEpoch, exitEpoch *Epoch,
 ) error {
+	var exiters exitersSet
 	// read blocks from verifiedBlocks (deposit phase).
 	for vb := range verifiedBlocks {
-		exiters, err := e.handleVerifiedBlock(depositEpoch, exitEpoch, vb)
+		log := log.WithField("blockNum", vb.NumberU64())
+		log.Trace("depositExitRoutine: received block")
+		exs, err := e.handleVerifiedBlock(depositEpoch, exitEpoch, vb)
 		if err != nil {
-			return fmt.Errorf("handling verified blocknr %v : %w", vb.NumberU64(), err)
+			return fmt.Errorf("handling verified blocknr %v: %w", vb.NumberU64(), err)
 		}
-		if e.phaseDone(vb.NumberU64()) {
+		exiters = append(exiters, exs...)
+		if e.params.IsLastPhaseBlock(vb.NumberU64()) {
+			log.Debug("depositExitRoutine: last block of phase, pushing deposit proofs and return")
 			e.depositProofs <- asDepProofs(e.depositProofCache)
 			e.depositProofCache = make(map[common.Address]*tee.DepositProof)
 			phaseDone <- exiters
@@ -212,11 +229,9 @@ func (e *Enclave) shiftEpochs(depositEpoch, txEpoch, exitEpoch **Epoch) {
 	*exitEpoch = *txEpoch
 	*txEpoch = *depositEpoch
 	*depositEpoch = (*txEpoch).NewNext()
+	log.Tracef("epochProc: pushing new deposit epoch: %d", (*depositEpoch).Number)
 	e.epochs.Push(*depositEpoch)
-}
-
-func (e *Enclave) phaseDone(blocknr uint64) bool {
-	return (blocknr % e.params.PhaseDuration) == e.params.PhaseDuration-1
+	log.Tracef("epochProc: epochs shifted, new deposit epoch: %d", (*depositEpoch).Number)
 }
 
 // handleVerifiedBlock receives a verified block and adjusts the transaction
@@ -226,15 +241,16 @@ func (e *Enclave) handleVerifiedBlock(depEpoch, exitEpoch *Epoch, vb *tee.Block)
 	for _, r := range vb.Receipts {
 		logss := e.filterLogs(r.Logs, []logPredicate{logIsDepositEvt, logIsExitEvt})
 		depLogs, exLogs := logss[0], logss[1]
-		log.WithField("blockNum", vb.Block.NumberU64()).Tracef("Deposits: %v\nExits: %v", depLogs, exLogs)
+		log.WithField("blockNum", vb.Block.NumberU64()).
+			Tracef("New block has %d Deposits, %d Exits", len(depLogs), len(exLogs))
 		// extract deposits, adjust epoch's balances.
-		if err := e.applyEpochDeposit(e.params.Contract, depEpoch, depLogs); err != nil {
-			return nil, fmt.Errorf("adjusting Epoch %v Balances: %w", depEpoch.Number, err)
+		if err := e.applyEpochDeposit(depEpoch, depLogs); err != nil {
+			return nil, fmt.Errorf("applying epoch %d deposits: %w", depEpoch.Number, err)
 		}
 		// extract exits, adjust epoch's balances.
 		exits, err := e.applyEpochExit(exitEpoch, exLogs)
 		if err != nil {
-			return nil, fmt.Errorf("handling exit of Epoch %v: %w", exitEpoch.Number, err)
+			return nil, fmt.Errorf("applying epoch %d exits: %w", exitEpoch.Number, err)
 		}
 		exiters = append(exiters, exits...)
 	}
@@ -262,7 +278,7 @@ func (e *Enclave) filterLogs(logs []*types.Log, preds []logPredicate) [][]*types
 
 // applyEpochDeposit adjusts `e.balances` according to the deposits done in
 // the given block.
-func (e *Enclave) applyEpochDeposit(contract common.Address, ep *Epoch, depLogs []*types.Log) error {
+func (e *Enclave) applyEpochDeposit(ep *Epoch, depLogs []*types.Log) error {
 	for _, depLog := range depLogs {
 		deposit, err := parseDepEvent(depLog)
 		if err != nil {
@@ -287,6 +303,12 @@ func (e *Enclave) applyEpochDeposit(contract common.Address, ep *Epoch, depLogs 
 		if err != nil {
 			return fmt.Errorf("generating deposit proof: %w", err)
 		}
+
+		log.WithFields(log.Fields{
+			"account": deposit.Account.String(),
+			"value":   eth.WeiToEthInt(deposit.Value).Int64(),
+			"epoch":   deposit.Epoch,
+		}).Trace("applyEpochDeposit: Caching deposit proof.")
 		e.depositProofCache[deposit.Account] = depProof
 	}
 	return nil
@@ -297,7 +319,7 @@ type exitersSet []common.Address
 
 // applyEpochExit handles the exit phase of given Epoch.
 func (e *Enclave) applyEpochExit(ep *Epoch, exLogs []*types.Log) (exitersSet, error) {
-	exiters := make(exitersSet, 0)
+	var exiters exitersSet
 	for _, exLog := range exLogs {
 		exit, err := parseExitEvent(exLog)
 		if err != nil {
@@ -331,7 +353,7 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 	}
 
 	if tx.Epoch != ep.Number {
-		log.Errorf("wrong Epoch for TX: Current.Epoch = %v TX.Epoch = %v", tx.Epoch, ep.Number)
+		log.Errorf("wrong TX Epoch: expected %d, got %d", ep.Number, tx.Epoch)
 		return nil
 	}
 

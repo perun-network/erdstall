@@ -53,6 +53,16 @@ func (c *Client) SetMinedBlockNum(n uint64) {
 	c.minedBlockNum = n
 }
 
+func (c *Client) UpdateLastBlockNum() {
+	ctx, cancel := eth.NewDefaultContext()
+	defer cancel()
+	h, err := c.ethClient.HeaderByNumber(ctx, nil)
+	if err != nil {
+		log.Panicf("Error getting latest head: %v", err)
+	}
+	c.SetMinedBlockNum(uint64(h.Number.Int64()))
+}
+
 // Deposit deposits amount to the Erdstall contract and waits until the deposit
 // tx is mined. The minedBlockNum is updated automatically.
 func (c *Client) Deposit(ctx context.Context, amount *big.Int) error {

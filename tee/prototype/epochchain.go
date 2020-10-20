@@ -18,7 +18,10 @@ type epochchain struct {
 func (ec *epochchain) Head() *Epoch {
 	ec.RLock()
 	defer ec.RUnlock()
+	return ec.head()
+}
 
+func (ec *epochchain) head() *Epoch {
 	if len(ec.epochs) == 0 {
 		return nil
 	}
@@ -48,7 +51,7 @@ func (ec *epochchain) Push(e *Epoch) {
 		return
 	}
 
-	headNum := ec.Head().Number
+	headNum := ec.head().Number
 	if e.Number != headNum+1 {
 		panic(fmt.Sprintf("Push: non-consecutive Epoch (got: %d, head %d)", e.Number, headNum))
 	}

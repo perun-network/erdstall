@@ -42,11 +42,10 @@ type (
 func parseDepEvent(l *types.Log) (*erdstallDepEvent, error) {
 	name := "Deposited"
 	event := new(erdstallDepEvent)
-	err := contractAbi.Unpack(event, name, l.Data)
+	err := unpackLog(event, name, *l)
 	if err != nil {
-		return nil, fmt.Errorf("unpacking %v : %w", name, err)
+		return nil, fmt.Errorf("unpacking %s: %w", name, err)
 	}
-
 	return event, nil
 }
 
@@ -54,12 +53,28 @@ func parseDepEvent(l *types.Log) (*erdstallDepEvent, error) {
 func parseExitEvent(l *types.Log) (*erdstallExitEvent, error) {
 	name := "Exiting"
 	event := new(erdstallExitEvent)
-	err := contractAbi.Unpack(event, name, l.Data)
+	err := unpackLog(event, name, *l)
 	if err != nil {
-		return nil, fmt.Errorf("unpacking %v : %w", name, err)
+		return nil, fmt.Errorf("unpacking %v: %w", name, err)
 	}
 
 	return event, nil
+}
+
+// UnpackLog unpacks a retrieved log into the provided output structure.
+func unpackLog(out interface{}, event string, log types.Log) error {
+	if len(log.Data) > 0 {
+		if err := contractAbi.Unpack(out, event, log.Data); err != nil {
+			return err
+		}
+	}
+	var indexed abi.Arguments
+	for _, arg := range contractAbi.Events[event].Inputs {
+		if arg.Indexed {
+			indexed = append(indexed, arg)
+		}
+	}
+	return abi.ParseTopics(out, indexed, log.Topics[1:])
 }
 
 func logIsDepositEvt(l *types.Log) bool {

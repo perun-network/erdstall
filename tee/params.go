@@ -20,17 +20,17 @@ func (p Parameters) DepositEpoch(blockNum uint64) Epoch {
 
 // TxEpoch returns the transaction epoch at the given block number.
 func (p Parameters) TxEpoch(blockNum uint64) Epoch {
-	return p.epoch(blockNum) + 1
+	return p.epoch(blockNum) - 1
 }
 
 // ExitEpoch returns the exit epoch at the given block number.
 func (p Parameters) ExitEpoch(blockNum uint64) Epoch {
-	return p.epoch(blockNum) + 2
+	return p.epoch(blockNum) - 2
 }
 
 // FreezingEpoch returns the freezing epoch at the given block number.
 func (p Parameters) FreezingEpoch(blockNum uint64) Epoch {
-	return p.epoch(blockNum) + 3
+	return p.epoch(blockNum) - 3
 }
 
 // Don't use this, use the specific FooEpoch methods.
@@ -40,4 +40,9 @@ func (p Parameters) epoch(blockNum uint64) Epoch {
 
 func (p Parameters) IsChallengeResponsePhase(blockNum uint64) bool {
 	return p.PhaseDuration-((blockNum-p.InitBlock)%p.PhaseDuration) <= p.ResponseDuration
+}
+
+// IsLastPhaseBlock tells whether this block is the last block of a phase.
+func (p Parameters) IsLastPhaseBlock(blockNum uint64) bool {
+	return ((blockNum - p.InitBlock) % p.PhaseDuration) == p.PhaseDuration-1
 }
