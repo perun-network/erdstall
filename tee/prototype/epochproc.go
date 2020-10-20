@@ -315,7 +315,7 @@ func (e *Enclave) applyEpochExit(ep *Epoch, exLogs []*types.Log) (exitersSet, er
 func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 	const LT = -1
 
-	if valid, err := tee.VerifyTransaction(e.params, *tx); err != nil {
+	if valid, err := tee.VerifyTransaction(e.params.Contract, *tx); err != nil {
 		return fmt.Errorf("verifying tx signature: %w", err)
 	} else if !valid {
 		return fmt.Errorf("invalid tx signature")

@@ -254,4 +254,9 @@ func (sub *BlockSubscription) Blocks() <-chan *tee.Block { return sub.blocks }
 // Unsubscribe ends the subscription.
 func (sub *BlockSubscription) Unsubscribe() {
 	sub.sub.Unsubscribe()
+	select {
+	case <-sub.blocks: // already closed
+	default:
+		close(sub.blocks)
+	}
 }
