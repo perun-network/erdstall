@@ -131,7 +131,7 @@ func noInconsistentExits(txc *txCache, exiters exitersSet) error {
 
 func (e *Enclave) depositExitRoutine(
 	verifiedBlocks <-chan *tee.Block,
-	phaseDone chan<- exitersSet,
+	exits chan<- exitersSet,
 	depositEpoch, exitEpoch *Epoch,
 ) error {
 	var exiters exitersSet
@@ -147,7 +147,7 @@ func (e *Enclave) depositExitRoutine(
 		if e.params.IsLastPhaseBlock(vb.NumberU64()) {
 			log.Debug("depositExitRoutine: last block of phase, pushing deposit proofs and return")
 			e.pushDepositProofs()
-			phaseDone <- exiters // phase done, sending exiters to TX processor.
+			exits <- exiters // phase done, sending exiters to TX processor.
 			return nil
 		}
 	}
@@ -309,9 +309,9 @@ func (e *Enclave) applyEpochDeposit(ep *Epoch, depLogs []*types.Log) error {
 		if accBal, ok := ep.balances[deposit.Account]; ok {
 			accBal.Value.Add(accBal.Value, deposit.Value)
 		} else {
-			ep.balances[deposit.Account] = Bal{
-				0,
-				new(big.Int).Set(deposit.Value),
+			ep.balances[deposit.Account] = &Bal{
+				Nonce: 0,
+				Value: new(big.Int).Set(deposit.Value),
 			}
 		}
 
@@ -385,8 +385,8 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 		return fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
 	}
 	if tx.Nonce != sender.Nonce+1 {
-		return fmt.Errorf("comparing tx nonce: %v, sender nonce: %v",
-			tx.Nonce, sender.Nonce)
+		return fmt.Errorf("sender tx nonce: %v, expected %v",
+			tx.Nonce, sender.Nonce+1)
 	}
 
 	sender.Value.Sub(sender.Value, tx.Amount)

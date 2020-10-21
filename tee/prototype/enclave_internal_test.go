@@ -99,6 +99,7 @@ func TestEnclave(t *testing.T) {
 
 	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(5)))
 	requiree.NoError(bob.Send(aliceAd.Address, eth.EthToWeiInt(10)))
+	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(2)))
 
 	// Signalling the enclave to stop now, so that it doesn't start new epochs on
 	// the next block.
