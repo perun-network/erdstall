@@ -4,10 +4,10 @@ package prototype
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
-	perrors "perun.network/go-perun/pkg/errors"
 	"perun.network/go-perun/pkg/sync/atomic"
 
 	"github.com/perun-network/erdstall/tee"
@@ -81,17 +81,34 @@ func (e *Enclave) Start() error {
 
 	var (
 		verifiedBlocks = make(chan *tee.Block, bufSizeBlocks) // connects the block and epoch processors
-		errg           = perrors.NewGatherer()
+		blockErr       = make(chan error)
+		epochErr       = make(chan error)
+		numProcs       = 2
 	)
 
-	errg.Go(func() error {
-		return e.blockProcessor(e.newBlocks, verifiedBlocks)
-	})
-	errg.Go(func() error {
-		return e.epochProcessor(verifiedBlocks, e.newTXs)
-	})
+	go func() {
+		blockErr <- e.blockProcessor(e.newBlocks, verifiedBlocks)
+	}()
+	go func() {
+		epochErr <- e.epochProcessor(verifiedBlocks, e.newTXs)
+	}()
 
-	return errg.Wait()
+	for {
+		if numProcs == 0 {
+			return nil
+		}
+		select {
+		case err := <-blockErr:
+			if err != nil {
+				return fmt.Errorf("block processor: %w", err)
+			}
+		case err := <-epochErr:
+			if err != nil {
+				return fmt.Errorf("epoch processor: %w", err)
+			}
+		}
+		numProcs--
+	}
 }
 
 // Stop lets the Enclave gracefully shutdown after the next phase is sealed. It
