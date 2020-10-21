@@ -3,7 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
-	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -16,12 +16,13 @@ import (
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/tee/prototype"
-	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
+	"perun.network/go-perun/pkg/errors"
 )
 
 // Operator resprents a TEE Plasma operator.
 type Operator struct {
-	enclave   tee.Enclave
+	enclave   *prototype.Enclave
 	ethClient *eth.Client
 	*depositProofs
 	*balanceProofs
@@ -30,7 +31,7 @@ type Operator struct {
 
 // New instantiates an operator with the given parameters.
 func New(
-	enclave tee.Enclave,
+	enclave *prototype.Enclave,
 	client *eth.Client,
 	contract common.Address,
 ) (*Operator, error) {
@@ -56,12 +57,12 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 	enclaveAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.EnclaveDerivationPath)
 	enclaveAccount, err := wallet.Derive(enclaveAccountDerivationPath, true)
 	AssertNoError(err)
-	log.Println("Enclave account loaded")
+	log.Debug("Operator.Setup: Enclave account loaded")
 
 	enclave := prototype.NewEnclaveWithAccount(wallet, enclaveAccount)
 	enclavePublicKey, _, err := enclave.Init()
 	AssertNoError(err)
-	log.Println("Enclave created")
+	log.Debug("Operator.Setup: Enclave created")
 
 	operatorAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.OperatorDerivationPath)
 	operatorAccount, err := wallet.Derive(operatorAccountDerivationPath, true)
@@ -69,7 +70,7 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 
 	client, err := eth.CreateEthereumClient(cfg.EthereumNodeURL, wallet, operatorAccount)
 	AssertNoError(err)
-	log.Println("Ethereum client initialized")
+	log.Debug("Operator.Setup: Ethereum client initialized")
 
 	enclaveParameters := tee.Parameters{
 		TEE:              enclavePublicKey,
@@ -80,12 +81,11 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 
 	err = client.DeployContracts(&enclaveParameters)
 	AssertNoError(err)
-	log.Printf("Contract deployed at %x\n", enclaveParameters.Contract)
+	log.Debugf("Operator.Setup: Contract deployed at %x", enclaveParameters.Contract)
 
 	err = enclave.SetParams(enclaveParameters)
 	AssertNoError(err)
-	go enclave.Start()
-	log.Println("Enclave initialized")
+	log.Debug("Operator.Setup: Enclave initialized")
 
 	operator, err := New(enclave, client, enclaveParameters.Contract)
 	AssertNoError(err)
@@ -95,43 +95,62 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 
 // Serve starts the operator's main routine.
 func (operator *Operator) Serve(port int) error {
-	// Ethereum block handling
-	blockSub, err := operator.ethClient.SubscribeToBlocks()
+	errg := errors.NewGatherer()
+
+	// Start enclave
+	errg.Go(operator.enclave.Start)
+	log.Debug("Operator.Serve: Enclave started")
+
+	bigBang, err := operator.contract.BigBang(nil)
 	if err != nil {
-		return errors.WithMessage(err, "creating block subscription")
+		return fmt.Errorf("reading BigBang: %w", err)
 	}
-	go func() {
+
+	// Ethereum block handling
+	blockSub, err := operator.ethClient.SubscribeToBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
+	if err != nil {
+		return fmt.Errorf("creating block subscription: %w", err)
+	}
+	errg.Go(func() error {
 		defer blockSub.Unsubscribe()
-		for {
-			b := <-blockSub.Blocks()
-			operator.enclave.ProcessBlocks(b)
-			log.Println("processed new block")
+		for b := range blockSub.Blocks() {
+			log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
+			if err := operator.enclave.ProcessBlocks(b); err != nil {
+				//TODO check for ErrEnclaveStopped error, see enclave internal tests
+				return err
+			}
+			log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
 		}
-	}()
+		return nil
+	})
 
 	// Handle deposit proofs
-	go func() {
+	errg.Go(func() error {
 		for {
 			dps, err := operator.enclave.DepositProofs()
 			if err != nil {
-				log.Fatal("failed to retrieve deposit proofs", err)
+				return fmt.Errorf("retrieving deposit proofs: %w", err)
 			}
-			log.Printf("retrieved %d deposit proofs\n", len(dps))
+			if len(dps) > 0 {
+				log.Infof("Operator.Serve: Retrieved %d deposit proofs", len(dps))
+			}
 			operator.depositProofs.AddAll(dps)
 		}
-	}()
+	})
 
 	// Handle balance proofs
-	go func() {
+	errg.Go(func() error {
 		for {
 			bps, err := operator.enclave.BalanceProofs()
 			if err != nil {
-				log.Fatal("failed to retrieve balance proofs", err)
+				return fmt.Errorf("retrieving balance proofs: %w", err)
 			}
-			log.Printf("retrieved %d balance proofs\n", len(bps))
+			if len(bps) > 0 {
+				log.Infof("Operator.Serve: Retrieved %d balance proofs", len(bps))
+			}
 			operator.balanceProofs.AddAll(bps)
 		}
-	}()
+	})
 
 	//TODO: operator handles on-chain challenge events
 
@@ -139,17 +158,18 @@ func (operator *Operator) Serve(port int) error {
 	remoteEnclave := newRemoteEnclave(operator)
 	err = rpc.Register(remoteEnclave)
 	if err != nil {
-		return errors.WithMessage(err, "registering remote enclave interface")
+		return fmt.Errorf("registering remote enclave interface: %w", err)
 	}
 	rpc.HandleHTTP()
 
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		return errors.WithMessage(err, "binding to socket")
+		return fmt.Errorf("binding to socket: %w", err)
 	}
 
-	err = http.Serve(l, nil)
-	return err
+	errg.Go(func() error { return http.Serve(l, nil) })
+
+	return errg.Wait()
 }
 
 type depositProofs struct {
@@ -175,8 +195,6 @@ func (dps *depositProofs) Get(user common.Address) (*tee.DepositProof, bool) {
 func (dps *depositProofs) AddAll(in []*tee.DepositProof) {
 	dps.mu.Lock()
 	defer dps.mu.Unlock()
-
-	dps.entries = make(map[common.Address]*tee.DepositProof)
 
 	for _, dp := range in {
 		dps.entries[dp.Balance.Account] = dp
@@ -206,8 +224,6 @@ func (bps *balanceProofs) Get(user common.Address) (*tee.BalanceProof, bool) {
 func (bps *balanceProofs) AddAll(in []*tee.BalanceProof) {
 	bps.mu.Lock()
 	defer bps.mu.Unlock()
-
-	bps.entries = make(map[common.Address]*tee.BalanceProof)
 
 	for _, bp := range in {
 		bps.entries[bp.Balance.Account] = bp

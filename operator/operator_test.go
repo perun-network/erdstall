@@ -2,58 +2,77 @@ package operator
 
 import (
 	"fmt"
-	"log"
 	"os/exec"
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+	"perun.network/go-perun/pkg/errors"
+
 	"github.com/ethereum/go-ethereum/accounts"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"github.com/perun-network/erdstall/operator/test"
+	"github.com/perun-network/erdstall/tee"
 )
 
-func TestMain(t *testing.T) {
+func TestOperator(t *testing.T) {
 	environment := initEnvironment(t)
 	defer environment.Shutdown()
 
+	errg := environment.errg
 	user1 := environment.user1
 	user2 := environment.user2
 
-	// deposit
-	user1.Deposit(10)
-	user2.Deposit(10)
+	AssertNoError(errg.Err())
 
-	// wait deposit phase
+	user1.TargetBalance = int64(10)
+	user2.TargetBalance = int64(5)
+
+	// deposit
+	user1.Deposit()
+	user2.Deposit()
+	log.Info("operator_test.TestOperator: Deposited funds at contract")
+
 	environment.WaitPhase()
 
 	// get deposit proofs
-	dp1 := user1.NextDepositProof()
-	log.Println("user1 deposit proof: ", dp1)
-	dp2 := user2.NextDepositProof()
-	log.Println("user2 deposit proof: ", dp2)
+	user1.DepositProof()
+	user2.DepositProof()
+	log.Info("operator_test.TestOperator: Retrieved deposit proofs")
 
-	// add transaction
-	user1.Transfer(user2.Address(), 3)
+	// transfer from user1 to user2
+	user1.Transfer(user2, 3)
+	log.Info("operator_test.TestOperator: Transfer from user1 to user2")
 
-	// wait phase
 	environment.WaitPhase()
 
 	// get balance proof
-	bp1 := user1.BalanceProof()
-	log.Println("user1 balance proof: ", bp1)
+	user1.BalanceProof()
+	user2.BalanceProof()
+	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
-	// add transactions
-	user1.Transfer(user2.Address(), 2)
-	user2.Transfer(user1.Address(), 1)
+	// transfer from user2 to user1
+	user2.Transfer(user1, 2)
+	log.Info("operator_test.TestOperator: Transfer from user2 to user1")
 
-	// wait phase
+	environment.WaitPhase()
+
+	// get balance proof
+	user1.BalanceProof()
+	user2.BalanceProof()
+	log.Info("operator_test.TestOperator: Retrieved balance proofs")
+
+	// transfer from user1 to user2 and transfer from user2 to user1
+	user1.Transfer(user2, 1)
+	user2.Transfer(user1, 1)
+	log.Info("operator_test.TestOperator: Transfer from user1 to user2 and transfer from user2 to user1")
+
 	environment.WaitPhase()
 
 	// get balance proofs
-	bp1 = user1.BalanceProof()
-	log.Println("user1 balance proof: ", bp1)
-	bp2 := user2.BalanceProof()
-	log.Println("user2 balance proof: ", bp2)
+	user1.BalanceProof()
+	user2.BalanceProof()
+	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
 	// // exit
 	// user1.Exit()
@@ -66,16 +85,20 @@ func TestMain(t *testing.T) {
 
 type environment struct {
 	*testing.T
-	cfg      *Config
-	cmd      *exec.Cmd
-	operator *Operator
-	user1    *test.User
-	user2    *test.User
+	cfg               *Config
+	cmd               *exec.Cmd
+	operator          *Operator
+	user1             *test.User
+	user2             *test.User
+	errg              *errors.Gatherer
+	enclaveParameters tee.Parameters
 }
 
 const blockTime = 1
 
 func initEnvironment(t *testing.T) *environment {
+	errg := errors.NewGatherer()
+
 	cfg := newDefaultConfig()
 
 	var cmd *exec.Cmd
@@ -96,11 +119,10 @@ func initEnvironment(t *testing.T) *environment {
 	}
 
 	operator, enclaveParameters := Setup(cfg)
-	log.Println("created operator")
-	go func() {
-		err := operator.Serve(cfg.Port)
-		AssertNoError(err)
-	}()
+	log.Info("operator_test.initEnvironment: Created operator")
+	errg.Go(func() error {
+		return operator.Serve(cfg.Port)
+	})
 	time.Sleep(1 * time.Second)
 
 	w, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
@@ -118,40 +140,21 @@ func initEnvironment(t *testing.T) *environment {
 
 	rpcURL := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
 
-	user1 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount1, rpcURL, enclaveParameters.Contract)
-	user2 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount2, rpcURL, enclaveParameters.Contract)
+	user1 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount1, rpcURL, enclaveParameters.Contract, enclaveParameters)
+	user2 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount2, rpcURL, enclaveParameters.Contract, enclaveParameters)
 
-	log.Println("created users")
+	log.Info("operator_test.initEnvironment: Created users")
 
-	return &environment{t, cfg, cmd, operator, user1, user2}
+	return &environment{t, cfg, cmd, operator, user1, user2, errg, enclaveParameters}
 }
 
 func (e *environment) WaitPhase() {
-	/*
-		waitBlock := func() {
-			dummyTransaction := func() {
-				ctx, cancel := NewDefaultContext()
-				defer cancel()
-
-				signedTx, err := e.operator.NewSignedTransaction(ctx, common.Address{}, big.NewInt(1))
-				if err != nil {
-					e.Error("creating signed transaction", err)
-				}
-
-				err = e.operator.SendTransaction(context.Background(), signedTx)
-				if err != nil {
-					e.Error("sending transaction", err)
-				}
-			}
-
-			dummyTransaction()
-		}
-	*/
-
 	waitBlock := func() {
 		time.Sleep(blockTime * time.Second)
 	}
-	waitBlock()
+	for i := uint64(0); i < e.enclaveParameters.PhaseDuration; i++ {
+		waitBlock()
+	}
 }
 
 func (e *environment) Shutdown() {

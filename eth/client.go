@@ -22,6 +22,7 @@ import (
 )
 
 const (
+	// DefaultGasLimit represents the default gas limit for this application.
 	DefaultGasLimit = 2000000
 	defaultPowDepth = 0
 )
@@ -38,6 +39,14 @@ type (
 		sub    ethereum.Subscription
 		blocks chan *tee.Block
 		quit   chan struct{}
+	}
+
+	// BlockSubscription2 represents a subscription to Ethereum blocks, version 2.
+	BlockSubscription2 struct {
+		headerSub       ethereum.Subscription
+		blocks          chan *tee.Block
+		err             chan error
+		nextBlockNumber *big.Int
 	}
 )
 
@@ -91,6 +100,7 @@ func CreateEthereumClient(url string, wallet accounts.Wallet, a accounts.Account
 	return NewClientForWalletAndAccount(ethClient, wallet, a), nil
 }
 
+// Account returns the account of the client.
 func (cl *Client) Account() accounts.Account {
 	return cl.account
 }
@@ -155,6 +165,61 @@ func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
 	return &BlockSubscription{sub, blocks, quit}, nil
 }
 
+// SubscribeToBlocksStartingFrom subscribes the client to the mined Ethereum
+// blocks starting from the given block number.
+func (cl *Client) SubscribeToBlocksStartingFrom(startBlockNumber *big.Int) (*BlockSubscription2, error) {
+	headers := make(chan *types.Header)
+	blocks := make(chan *tee.Block)
+	errChan := make(chan error)
+
+	ctx, cancel := NewDefaultContext()
+	defer cancel()
+
+	headerSub, err := cl.SubscribeNewHead(ctx, headers)
+	if err != nil {
+		return nil, fmt.Errorf("subscribing to blockchain head: %w", err)
+	}
+
+	blockSub := &BlockSubscription2{headerSub, blocks, errChan, startBlockNumber}
+
+	run := func() error {
+		for {
+			select {
+			case err := <-headerSub.Err():
+				if err != nil {
+					return fmt.Errorf("subscription error: %w", err)
+				}
+				log.Debug("EthClient: Header subscription closed")
+				close(blocks)
+				return nil
+
+			case header := <-headers:
+				log.WithFields(log.Fields{
+					"blockNum": header.Number.Uint64(),
+					"hash":     header.Hash().Hex()}).
+					Debugf("EthClient: New header.")
+
+				for blockSub.nextBlockNumber.Cmp(header.Number) < 0 {
+					if err := blockSub.pushNextBlock(cl); err != nil {
+						return fmt.Errorf("pushing block: %w", err)
+					}
+				}
+
+				if err := blockSub.pushNextBlock(cl); err != nil {
+					return fmt.Errorf("pushing block: %w", err)
+				}
+			}
+		}
+	}
+
+	go func() {
+		err := run()
+		errChan <- err
+	}()
+
+	return blockSub, nil
+}
+
 // SubscribeToDeposited writes past Deposited events and newly received ones
 // into the sink. The `epochs` and `accs` arguments can be used to filter for
 // specific events. Passing `nil` will skip the filtering.
@@ -200,6 +265,16 @@ func (cl *Client) BlockByHash(ctx context.Context, hash common.Hash) (*tee.Block
 		return nil, fmt.Errorf("retrieving block: %w", err)
 	}
 
+	receipts, err := cl.TransactionReceipts(ctx, block)
+	if err != nil {
+		return nil, fmt.Errorf("retrieving receipts: %w", err)
+	}
+
+	return &tee.Block{Block: *block, Receipts: receipts}, nil
+}
+
+// TransactionReceipts returns the transaction receipts for the given block.
+func (cl *Client) TransactionReceipts(ctx context.Context, block *types.Block) (types.Receipts, error) {
 	var receipts []*types.Receipt
 	for _, t := range block.Transactions() {
 		r, err := cl.TransactionReceipt(ctx, t.Hash())
@@ -208,8 +283,7 @@ func (cl *Client) BlockByHash(ctx context.Context, hash common.Hash) (*tee.Block
 		}
 		receipts = append(receipts, r)
 	}
-
-	return &tee.Block{Block: *block, Receipts: receipts}, nil
+	return receipts, nil
 }
 
 // NextNonce returns the next Ethereum nonce.
@@ -300,4 +374,33 @@ func (sub *BlockSubscription) Unsubscribe() {
 	default:
 		close(sub.quit)
 	}
+}
+
+// Blocks returns the channel on which to receive subscribed blocks.
+func (blockSub *BlockSubscription2) Blocks() <-chan *tee.Block { return blockSub.blocks }
+
+// Unsubscribe ends the subscription.
+func (blockSub *BlockSubscription2) Unsubscribe() {
+	blockSub.headerSub.Unsubscribe()
+}
+
+func (blockSub *BlockSubscription2) pushNextBlock(cl *Client) error {
+	ctx, cancel := NewDefaultContext()
+	defer cancel()
+
+	block, err := cl.ContractBackend.BlockByNumber(ctx, blockSub.nextBlockNumber)
+	if err != nil {
+		return fmt.Errorf("retrieving block by number: %w", err)
+	}
+
+	receipts, err := cl.TransactionReceipts(ctx, block)
+	if err != nil {
+		return fmt.Errorf("retrieving block receipts: %w", err)
+	}
+
+	log.Tracef("eth.Client: Pushing block number %d", block.NumberU64())
+
+	blockSub.blocks <- &tee.Block{Block: *block, Receipts: receipts}
+	blockSub.nextBlockNumber = new(big.Int).Add(blockSub.nextBlockNumber, big.NewInt(1))
+	return nil
 }
