@@ -96,6 +96,14 @@ func (c *Client) Send(recipient common.Address, amount *big.Int) error {
 
 	c.SignTx(tx)
 
+	log := log.WithFields(log.Fields{
+		"nonce":  tx.Nonce,
+		"epoch":  tx.Epoch,
+		"amount": tx.Amount,
+		"sender": tx.Sender.String(),
+	})
+	log.Debug("Sending TX")
+	defer log.Trace("TX sent")
 	return c.tr.Send(tx)
 }
 
