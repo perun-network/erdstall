@@ -11,7 +11,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	log "github.com/sirupsen/logrus"
-	perrors "perun.network/go-perun/pkg/errors"
 
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
@@ -27,28 +26,40 @@ func (e *Enclave) epochProcessor(
 		depositEpoch = NewEpoch(0)
 		txEpoch      *Epoch
 		exitEpoch    *Epoch
+		depExErr     = make(chan error)
+		txErr        = make(chan error)
 	)
 	// push first epoch
 	e.epochs.Push(depositEpoch)
 
 	for {
+		numProcs := 2
 		log := log.WithField("depositEpoch", depositEpoch.Number)
-		errg := perrors.NewGatherer()
 
 		log.Info("epochProcessor: starting new phase")
 
 		done := make(chan exitersSet)
-		errg.Go(func() error {
-			return e.depositExitRoutine(verifiedBlocks, done, depositEpoch, exitEpoch)
-		})
+		go func() {
+			depExErr <- e.depositExitRoutine(verifiedBlocks, done, depositEpoch, exitEpoch)
+		}()
 
-		errg.Go(func() error {
-			return e.txRoutine(done, txs, txEpoch)
-		})
+		go func() {
+			txErr <- e.txRoutine(done, txs, txEpoch)
+		}()
 
 		log.Debug("epochProcessor: waiting for depositExitRoutine and txRoutine...")
-		if err := errg.Wait(); err != nil {
-			return err
+		for numProcs != 0 {
+			select {
+			case err := <-depExErr:
+				if err != nil {
+					return fmt.Errorf("depositExitRoutine: %w", err)
+				}
+			case err := <-txErr:
+				if err != nil {
+					return fmt.Errorf("txRoutine: %w", err)
+				}
+			}
+			numProcs--
 		}
 
 		if !e.running.IsSet() {
