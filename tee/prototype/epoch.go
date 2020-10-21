@@ -36,7 +36,6 @@ func NewEpoch(n tee.Epoch) *Epoch {
 // by one.
 func (e *Epoch) NewNext() *Epoch {
 	next := NewEpoch(e.Number + 1)
-	next.balances = cloneBalances(e.balances)
 	return next
 }
 
@@ -49,4 +48,23 @@ func cloneBalances(a map[common.Address]Bal) map[common.Address]Bal {
 		}
 	}
 	return b
+}
+
+// merge merges `e` with `p` and returns a clone.
+func (e *Epoch) merge(p *Epoch) *Epoch {
+	mEpoch := NewEpoch(e.Number)
+	if p == nil {
+		mEpoch.balances = cloneBalances(e.balances)
+		return mEpoch
+	}
+
+	mEpoch.balances = cloneBalances(p.balances)
+	for acc, bal := range e.balances {
+		if pBal, ok := mEpoch.balances[acc]; ok {
+			bal.Value.Add(bal.Value, pBal.Value)
+		} else {
+			mEpoch.balances[acc] = bal
+		}
+	}
+	return mEpoch
 }

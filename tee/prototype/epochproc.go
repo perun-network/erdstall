@@ -69,7 +69,7 @@ func (e *Enclave) epochProcessor(
 		}
 
 		log.Debug("epochProcessor: routines returned, shifting epochs")
-		e.shiftEpochs(&depositEpoch, &txEpoch, &exitEpoch)
+		e.processEpochShift(&depositEpoch, &txEpoch, &exitEpoch)
 	}
 }
 
@@ -88,6 +88,7 @@ func (e *Enclave) txRoutine(
 		select {
 		case exiters := <-exits:
 			log.Trace("txRoutine: exiters received")
+			// TODO: check for inconsistent deposits.
 			if err := noInconsistentExits(&stagedTxs, exiters); err != nil {
 				log.Errorf("handling exiters: %v", err)
 			}
@@ -113,6 +114,7 @@ func (e *Enclave) txRoutine(
 
 // noInconsistentExits checks that none of the exited parties tried to submit a
 // transaction.
+// TODO: check for inconsistent deposits.
 func noInconsistentExits(txc *txCache, exiters exitersSet) error {
 	for _, e := range exiters {
 		sTxs, sOk := txc.senders[e]
@@ -238,10 +240,10 @@ func (e *Enclave) signBalanceProof(b tee.Balance) (*tee.BalanceProof, error) {
 	}, nil
 }
 
-// shiftEpochs shifts the given three epochs by one phase.
-func (e *Enclave) shiftEpochs(depositEpoch, txEpoch, exitEpoch **Epoch) {
+// processEpochShift shifts the given three epochs by one phase.
+func (e *Enclave) processEpochShift(depositEpoch, txEpoch, exitEpoch **Epoch) {
 	*exitEpoch = *txEpoch
-	*txEpoch = *depositEpoch
+	*txEpoch = (*depositEpoch).merge(*txEpoch)
 	*depositEpoch = (*txEpoch).NewNext()
 	log.Tracef("epochProc: pushing new deposit epoch: %d", (*depositEpoch).Number)
 	e.epochs.Push(*depositEpoch)
