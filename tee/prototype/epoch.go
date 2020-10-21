@@ -16,7 +16,7 @@ type (
 	Epoch struct {
 		Number tee.Epoch
 
-		balances map[common.Address]Bal
+		balances map[common.Address]*Bal
 	}
 
 	Bal struct {
@@ -28,7 +28,7 @@ type (
 func NewEpoch(n tee.Epoch) *Epoch {
 	return &Epoch{
 		Number:   n,
-		balances: make(map[common.Address]Bal),
+		balances: make(map[common.Address]*Bal),
 	}
 }
 
@@ -40,10 +40,10 @@ func (e *Epoch) NewNext() *Epoch {
 	return next
 }
 
-func cloneBalances(a map[common.Address]Bal) map[common.Address]Bal {
-	b := make(map[common.Address]Bal, len(a))
+func cloneBalances(a map[common.Address]*Bal) map[common.Address]*Bal {
+	b := make(map[common.Address]*Bal, len(a))
 	for k, v := range a {
-		b[k] = Bal{
+		b[k] = &Bal{
 			Nonce: v.Nonce,
 			Value: new(big.Int).Set(v.Value),
 		}
