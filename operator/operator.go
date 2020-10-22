@@ -12,12 +12,13 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	log "github.com/sirupsen/logrus"
+	"perun.network/go-perun/pkg/errors"
+
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/tee/prototype"
-	log "github.com/sirupsen/logrus"
-	"perun.network/go-perun/pkg/errors"
 )
 
 // Operator resprents a TEE Plasma operator.
@@ -97,8 +98,18 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 func (operator *Operator) Serve(port int) error {
 	errg := errors.NewGatherer()
 
+	errGo := func(name string, fn func() error) {
+		errg.Go(func() error {
+			err := fn()
+			if err != nil {
+				log.Errorf("Error in %s: %v", name, err)
+			}
+			return err
+		})
+	}
+
 	// Start enclave
-	errg.Go(operator.enclave.Start)
+	errGo("Enclave.Start", operator.enclave.Start)
 	log.Info("Operator.Serve: Enclave started")
 
 	bigBang, err := operator.contract.BigBang(nil)
@@ -111,7 +122,7 @@ func (operator *Operator) Serve(port int) error {
 	if err != nil {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}
-	errg.Go(func() error {
+	errGo("Op.BlockSub", func() error {
 		defer blockSub.Unsubscribe()
 		for b := range blockSub.Blocks() {
 			log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
@@ -126,7 +137,7 @@ func (operator *Operator) Serve(port int) error {
 	log.Info("Operator.Serve: Block subcription started")
 
 	// Handle deposit proofs
-	errg.Go(func() error {
+	errGo("Op.DepositProofs", func() error {
 		for {
 			dps, err := operator.enclave.DepositProofs()
 			if err != nil {
@@ -141,7 +152,7 @@ func (operator *Operator) Serve(port int) error {
 	log.Info("Operator.Serve: Deposit proof handling started")
 
 	// Handle balance proofs
-	errg.Go(func() error {
+	errGo("Op.BalanceProofs", func() error {
 		for {
 			bps, err := operator.enclave.BalanceProofs()
 			if err != nil {
@@ -170,7 +181,7 @@ func (operator *Operator) Serve(port int) error {
 		return fmt.Errorf("binding to socket: %w", err)
 	}
 
-	errg.Go(func() error { return http.Serve(l, nil) })
+	errGo("Op.RPCServe", func() error { return http.Serve(l, nil) })
 	log.Info("Operator.Serve: RPC handling started")
 
 	return errg.Wait()
