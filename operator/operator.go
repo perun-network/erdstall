@@ -62,7 +62,7 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 	enclave := prototype.NewEnclaveWithAccount(wallet, enclaveAccount)
 	enclavePublicKey, _, err := enclave.Init()
 	AssertNoError(err)
-	log.Debug("Operator.Setup: Enclave created")
+	log.Info("Operator.Setup: Enclave created")
 
 	operatorAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.OperatorDerivationPath)
 	operatorAccount, err := wallet.Derive(operatorAccountDerivationPath, true)
@@ -70,7 +70,7 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 
 	client, err := eth.CreateEthereumClient(cfg.EthereumNodeURL, wallet, operatorAccount)
 	AssertNoError(err)
-	log.Debug("Operator.Setup: Ethereum client initialized")
+	log.Info("Operator.Setup: Ethereum client initialized")
 
 	enclaveParameters := tee.Parameters{
 		TEE:              enclavePublicKey,
@@ -81,11 +81,11 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 
 	err = client.DeployContracts(&enclaveParameters)
 	AssertNoError(err)
-	log.Debugf("Operator.Setup: Contract deployed at %x", enclaveParameters.Contract)
+	log.Infof("Operator.Setup: Contract deployed at %x", enclaveParameters.Contract)
 
 	err = enclave.SetParams(enclaveParameters)
 	AssertNoError(err)
-	log.Debug("Operator.Setup: Enclave initialized")
+	log.Info("Operator.Setup: Enclave initialized")
 
 	operator, err := New(enclave, client, enclaveParameters.Contract)
 	AssertNoError(err)
@@ -99,7 +99,7 @@ func (operator *Operator) Serve(port int) error {
 
 	// Start enclave
 	errg.Go(operator.enclave.Start)
-	log.Debug("Operator.Serve: Enclave started")
+	log.Info("Operator.Serve: Enclave started")
 
 	bigBang, err := operator.contract.BigBang(nil)
 	if err != nil {
@@ -123,6 +123,7 @@ func (operator *Operator) Serve(port int) error {
 		}
 		return nil
 	})
+	log.Info("Operator.Serve: Block subcription started")
 
 	// Handle deposit proofs
 	errg.Go(func() error {
@@ -132,11 +133,12 @@ func (operator *Operator) Serve(port int) error {
 				return fmt.Errorf("retrieving deposit proofs: %w", err)
 			}
 			if len(dps) > 0 {
-				log.Infof("Operator.Serve: Retrieved %d deposit proofs", len(dps))
+				log.Debugf("Operator.Serve: Retrieved %d deposit proofs", len(dps))
 			}
 			operator.depositProofs.AddAll(dps)
 		}
 	})
+	log.Info("Operator.Serve: Deposit proof handling started")
 
 	// Handle balance proofs
 	errg.Go(func() error {
@@ -146,11 +148,12 @@ func (operator *Operator) Serve(port int) error {
 				return fmt.Errorf("retrieving balance proofs: %w", err)
 			}
 			if len(bps) > 0 {
-				log.Infof("Operator.Serve: Retrieved %d balance proofs", len(bps))
+				log.Debugf("Operator.Serve: Retrieved %d balance proofs", len(bps))
 			}
 			operator.balanceProofs.AddAll(bps)
 		}
 	})
+	log.Info("Operator.Serve: Balance proof handling started")
 
 	//TODO: operator handles on-chain challenge events
 
@@ -168,6 +171,7 @@ func (operator *Operator) Serve(port int) error {
 	}
 
 	errg.Go(func() error { return http.Serve(l, nil) })
+	log.Info("Operator.Serve: RPC handling started")
 
 	return errg.Wait()
 }
