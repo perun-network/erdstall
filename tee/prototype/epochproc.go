@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/perun-network/erdstall/eth"
@@ -83,14 +84,15 @@ func (e *Enclave) txRoutine(
 	if txEpoch != nil {
 		log = log.WithField("epoch", txEpoch.Number)
 	}
+
+	stagedTxs := makeTxCache()
 	for {
-		stagedTxs := makeTxCache()
 		select {
 		case exiters := <-exits:
 			log.Trace("txRoutine: exiters received")
 			// TODO: check for inconsistent deposits.
 			if err := noInconsistentExits(&stagedTxs, exiters); err != nil {
-				log.Errorf("handling exiters: %v", err)
+				log.Errorf("txRoutine: checking exiters: %v", err)
 			}
 			bps, err := e.generateBalanceProofs(txEpoch)
 			if err != nil {
@@ -102,11 +104,19 @@ func (e *Enclave) txRoutine(
 
 			log.Trace("txRoutine: return")
 			return nil
+
 		case tx := <-txs:
+			log.WithFields(logrus.Fields{
+				"sender":    tx.Sender.String(),
+				"recipient": tx.Recipient.String(),
+				"nonce":     tx.Nonce,
+				"amount":    tx.Amount,
+			}).Debug("txRoutine: TX received, applying...")
 			stagedTxs.cacheTx(tx)
 			err := e.applyEpochTx(txEpoch, tx)
 			if err != nil {
-				return fmt.Errorf("adjusting Epoch %v Balances: %w", txEpoch.Number, err)
+				log.Errorf("txRoutine: Error applying tx: %v", err)
+				return fmt.Errorf("applying epoch %d Balances: %w", txEpoch.Number, err)
 			}
 		}
 	}
@@ -138,7 +148,7 @@ func (e *Enclave) depositExitRoutine(
 	// read blocks from verifiedBlocks (deposit phase).
 	for vb := range verifiedBlocks {
 		log := log.WithField("blockNum", vb.NumberU64())
-		log.Trace("depositExitRoutine: received block")
+		log.Debug("depositExitRoutine: received block")
 		exs, err := e.handleVerifiedBlock(depositEpoch, exitEpoch, vb)
 		if err != nil {
 			return fmt.Errorf("handling verified blocknr %v: %w", vb.NumberU64(), err)
@@ -369,7 +379,7 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 	}
 
 	if tx.Epoch != ep.Number {
-		log.Errorf("wrong TX Epoch: expected %d, got %d", ep.Number, tx.Epoch)
+		log.Errorf("txProc: wrong TX Epoch: expected %d, got %d", ep.Number, tx.Epoch)
 		return nil
 	}
 
