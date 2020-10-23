@@ -46,3 +46,15 @@ func (p Parameters) IsChallengeResponsePhase(blockNum uint64) bool {
 func (p Parameters) IsLastPhaseBlock(blockNum uint64) bool {
 	return ((blockNum - p.InitBlock) % p.PhaseDuration) == p.PhaseDuration-1
 }
+
+func (p Parameters) EpochStartBlock(epoch uint64) uint64 {
+	return p.InitBlock + epoch*p.PhaseDuration
+}
+
+func (p Parameters) DepositEndBlock(epoch uint64) uint64 {
+	return p.EpochStartBlock(epoch) + p.PhaseDuration
+}
+
+func (p Parameters) TxEndBlock(epoch uint64) uint64 {
+	return p.EpochStartBlock(epoch) + p.PhaseDuration*2
+}

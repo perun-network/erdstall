@@ -12,7 +12,6 @@ var (
 	abiUint64, _  = abi.NewType("uint64", "", nil)
 	abiAddress, _ = abi.NewType("address", "", nil)
 	abiString, _  = abi.NewType("string", "", nil)
-	abiBytes, _   = abi.NewType("bytes", "", nil)
 )
 
 func EncodeDepositProof(contract common.Address, balance Balance) ([]byte, error) {

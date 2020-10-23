@@ -113,3 +113,11 @@ type (
 		Value   *big.Int       // sol: uint256
 	}
 )
+
+func (b *Balance) Clone() Balance {
+	return Balance{
+		Epoch:   b.Epoch,
+		Account: b.Account,
+		Value:   new(big.Int).Set(b.Value),
+	}
+}
