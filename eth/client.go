@@ -85,7 +85,7 @@ func NewClientForWallet(
 	if err != nil {
 		return nil, fmt.Errorf("deriving account: %w", err)
 	}
-	tr := perunhd.NewTransactor(hdw)
+	tr := perunhd.NewTransactor(hdw.Wallet())
 	cb := peruneth.NewContractBackend(ci, tr)
 
 	return NewClient(cb, acc.Account), nil
@@ -103,6 +103,50 @@ func CreateEthereumClient(url string, wallet accounts.Wallet, a accounts.Account
 // Account returns the account of the client.
 func (cl *Client) Account() accounts.Account {
 	return cl.account
+}
+
+func (cl *Client) WaitForBlock(ctx context.Context, target uint64) error {
+	sub, err := cl.SubscribeToBlocks()
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+
+	for {
+		select {
+		case b := <-sub.Blocks():
+			if b.NumberU64() >= target {
+				return nil
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// SubscribeToEpochs writes new epochs into `sink`. Can be cancelled via ctx.
+// Should be called in a go-routine, since it blocks.
+// Future InitBlock numbers are not supported, so it will not return the 0. th epoch.
+func (cl *Client) SubscribeToEpochs(ctx context.Context, params tee.Parameters, sink chan uint64, blockSink chan uint64) error {
+	sub, err := cl.SubscribeToBlocks()
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+
+	oldEpoch := uint64(0)
+	for {
+		select {
+		case block := <-sub.Blocks():
+			blockSink <- block.NumberU64()
+			if newEpoch := params.DepositEpoch(block.NumberU64()); newEpoch > oldEpoch {
+				sink <- newEpoch
+				oldEpoch = newEpoch
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // SubscribeToBlocks subscribes the client to the mined Ethereum blocks.

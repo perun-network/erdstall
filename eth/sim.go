@@ -44,7 +44,7 @@ func NewSimSetup(rng *rand.Rand, numAccounts int) *SimSetup {
 		simBackend.FundAddress(ctx, acc.Account.Address)
 	}
 
-	cb := ethchannel.NewContractBackend(simBackend, hd.NewTransactor(pwallet))
+	cb := ethchannel.NewContractBackend(simBackend, hd.NewTransactor(pwallet.Wallet()))
 
 	return &SimSetup{
 		SimBackend: simBackend,
