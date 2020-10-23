@@ -197,11 +197,11 @@ contract Erdstall {
         return (uint64(block.number) - bigBang) / phaseDuration;
     }
 
-    function verifyBalance(Balance memory balance, bytes memory sig) internal view {
+    function verifyBalance(Balance memory balance, bytes memory sig) public view {
         require(Sig.verify(encodeBalanceProof(balance), sig, tee), "invalid signature");
     }
 
-    function encodeBalanceProof(Balance memory balance) internal view returns (bytes memory) {
+    function encodeBalanceProof(Balance memory balance) public view returns (bytes memory) {
         return abi.encode(
             "ErdstallBalance",
             address(this),
