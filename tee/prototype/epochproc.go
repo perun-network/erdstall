@@ -94,6 +94,9 @@ func (e *Enclave) txRoutine(
 			if err := noInconsistentExits(&stagedTxs, exiters); err != nil {
 				log.Errorf("txRoutine: checking exiters: %v", err)
 			}
+
+			txEpoch.applyExits(exiters)
+
 			bps, err := e.generateBalanceProofs(txEpoch)
 			if err != nil {
 				return fmt.Errorf("generating balance proofs: %w", err)

@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/perun-network/erdstall/tee"
 )
@@ -48,6 +49,18 @@ func cloneBalances(a map[common.Address]*Bal) map[common.Address]*Bal {
 		}
 	}
 	return b
+}
+
+func (e *Epoch) applyExits(exiters exitersSet) {
+	if e == nil {
+		return
+	}
+	log := log.WithField("epoch", e.Number)
+	log.Debugf("removing %d exiters", len(exiters))
+	for _, exiter := range exiters {
+		log.Tracef("removed %s", exiter.Hash().String())
+		delete(e.balances, exiter)
+	}
 }
 
 // merge merges `e` with `p` and returns a clone.
