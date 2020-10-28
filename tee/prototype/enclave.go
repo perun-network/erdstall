@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	log "github.com/sirupsen/logrus"
 	"perun.network/go-perun/pkg/sync/atomic"
 
 	"github.com/perun-network/erdstall/tee"
@@ -67,16 +68,20 @@ func NewEnclaveWithAccount(wallet accounts.Wallet, account accounts.Account) *En
 	return e
 }
 
-// Start starts the enclave routines and blocks until they return. It returns an
-// error gatherer of all errors that the routines return, if any.
+// Run starts the enclave routines and blocks until they return. If any
+// routine fails, it returns its error immediately.
 //
-// Start must be called after Init and SetParams.
+// Run must be called after Init.
 //
-// Start can be stopped by calling Stop. However, Start will process blocks and
+// Run can be stopped by calling Shutdown. However, Run will process blocks and
 // transactions until the current phase has finished.
-func (e *Enclave) Start() error {
+func (e *Enclave) Run(params tee.Parameters) error {
 	if !e.running.TrySet() {
-		panic("Enclave already running")
+		log.Panic("Enclave already running")
+	}
+
+	if err := e.setParams(params); err != nil {
+		return err
 	}
 
 	var (
@@ -93,10 +98,7 @@ func (e *Enclave) Start() error {
 		epochErr <- e.epochProcessor(verifiedBlocks, e.newTXs)
 	}()
 
-	for {
-		if numProcs == 0 {
-			return nil
-		}
+	for numProcs != 0 {
 		select {
 		case err := <-blockErr:
 			if err != nil {
@@ -109,17 +111,18 @@ func (e *Enclave) Start() error {
 		}
 		numProcs--
 	}
+	return nil
 }
 
-// Stop lets the Enclave gracefully shutdown after the next phase is sealed. It
+// Shutdown lets the Enclave gracefully shutdown after the next phase is sealed. It
 // will continue receiving transactions and blocks until the last block of the
 // current phase is received via ProcessBlocks.
 //
 // The Enclave Interface methods will return an ErrEnclaveStopped error after
 // the Enclave shut down.
-func (e *Enclave) Stop() {
+func (e *Enclave) Shutdown() {
 	if !e.running.TryUnset() {
-		panic("Enclave not running")
+		log.Panic("Enclave not running")
 	}
 }
 
@@ -143,10 +146,7 @@ func (e *Enclave) Init() (tee common.Address, _ []byte, err error) {
 	return e.account.Address, nil, nil
 }
 
-// SetParams should be called by the operator after they deployed the
-// contract to set the system parameters, including the contract address.
-// The Enclave verifies the parameters upon receival of the first block.
-func (e *Enclave) SetParams(p tee.Parameters) error {
+func (e *Enclave) setParams(p tee.Parameters) error {
 	if p.TEE != e.account.Address {
 		return errors.New("tee address mismatch")
 	}

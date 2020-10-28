@@ -22,10 +22,13 @@ type (
 		// calling Init.
 		Init() (common.Address, []byte, error)
 
-		// SetParams should be called by the operator after they deployed the
-		// contract to set the system parameters, including the contract address.
+		// Run should be called by the operator after they deployed the contract to
+		// start the Enclave with the given parameters. The call blocks until the
+		// Enclave has shut down. It can be told to gracefully shutdown by calling
+		// Shutdown.
+		//
 		// The Enclave verifies the parameters upon receival of the first block.
-		SetParams(Parameters) error
+		Run(Parameters) error
 
 		// ProcessBlocks should be called by the Operator to cause the enclave to
 		// process the given block(s), logging deposits and exits.
@@ -60,6 +63,16 @@ type (
 		//
 		// It should be called in a loop by the operator.
 		BalanceProofs() ([]*BalanceProof, error)
+
+		// Shutdown signals the Enclave to gracefully shutdown after the next phase
+		// is sealed. It will continue receiving transactions and blocks until the
+		// last block of the current phase is received via ProcessBlocks.
+		//
+		// The functions ProcessBlocks, ProcessTXs, DepositProofs and BalanceProofs
+		// will return an ErrEnclaveStopped error after the Enclave shut down.
+		// The operator should test for this error in their loops around those
+		// functions.
+		Shutdown()
 	}
 
 	// Epoch is the epoch counter type.

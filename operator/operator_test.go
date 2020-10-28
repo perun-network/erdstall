@@ -11,6 +11,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+
 	"github.com/perun-network/erdstall/operator/test"
 	"github.com/perun-network/erdstall/tee"
 )
@@ -118,7 +119,8 @@ func initEnvironment(t *testing.T) *environment {
 		time.Sleep(3 * time.Second)
 	}
 
-	operator, enclaveParameters := Setup(cfg)
+	operator := Setup(cfg)
+	params := operator.Params()
 	log.Info("operator_test.initEnvironment: Created operator")
 	errg.Go(func() error {
 		return operator.Serve(cfg.Port)
@@ -140,12 +142,12 @@ func initEnvironment(t *testing.T) *environment {
 
 	rpcURL := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
 
-	user1 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount1, rpcURL, enclaveParameters.Contract, enclaveParameters)
-	user2 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount2, rpcURL, enclaveParameters.Contract, enclaveParameters)
+	user1 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount1, rpcURL, params.Contract, params)
+	user2 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount2, rpcURL, params.Contract, params)
 
 	log.Info("operator_test.initEnvironment: Created users")
 
-	return &environment{t, cfg, cmd, operator, user1, user2, errg, enclaveParameters}
+	return &environment{t, cfg, cmd, operator, user1, user2, errg, params}
 }
 
 func (e *environment) WaitPhase() {
