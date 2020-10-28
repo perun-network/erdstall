@@ -23,7 +23,8 @@ import (
 
 // Operator resprents a TEE Plasma operator.
 type Operator struct {
-	enclave   *prototype.Enclave
+	enclave   tee.Enclave
+	params    tee.Parameters
 	ethClient *eth.Client
 	*depositProofs
 	*balanceProofs
@@ -32,7 +33,8 @@ type Operator struct {
 
 // New instantiates an operator with the given parameters.
 func New(
-	enclave *prototype.Enclave,
+	enclave tee.Enclave,
+	params tee.Parameters,
 	client *eth.Client,
 	contract common.Address,
 ) (*Operator, error) {
@@ -42,16 +44,17 @@ func New(
 	}
 
 	return &Operator{
-		enclave,
-		client,
-		newDepositProofs(),
-		newBalanceProofs(),
-		_contract,
+		enclave:       enclave,
+		params:        params,
+		ethClient:     client,
+		depositProofs: newDepositProofs(),
+		balanceProofs: newBalanceProofs(),
+		contract:      _contract,
 	}, nil
 }
 
 // Setup creates an operator from the given configuration.
-func Setup(cfg *Config) (*Operator, tee.Parameters) {
+func Setup(cfg *Config) *Operator {
 	wallet, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
 	AssertNoError(err)
 
@@ -73,25 +76,25 @@ func Setup(cfg *Config) (*Operator, tee.Parameters) {
 	AssertNoError(err)
 	log.Info("Operator.Setup: Ethereum client initialized")
 
-	enclaveParameters := tee.Parameters{
+	params := tee.Parameters{
 		TEE:              enclavePublicKey,
 		PhaseDuration:    cfg.PhaseDuration,
 		ResponseDuration: cfg.ResponseDuration,
 		PowDepth:         cfg.PowDepth,
 	}
 
-	err = client.DeployContracts(&enclaveParameters)
+	err = client.DeployContracts(&params)
 	AssertNoError(err)
-	log.Infof("Operator.Setup: Contract deployed at %x", enclaveParameters.Contract)
+	log.Infof("Operator.Setup: Contract deployed at %s", params.Contract.String())
 
-	err = enclave.SetParams(enclaveParameters)
-	AssertNoError(err)
-	log.Info("Operator.Setup: Enclave initialized")
-
-	operator, err := New(enclave, client, enclaveParameters.Contract)
+	operator, err := New(enclave, params, client, params.Contract)
 	AssertNoError(err)
 
-	return operator, enclaveParameters
+	return operator
+}
+
+func (operator *Operator) Params() tee.Parameters {
+	return operator.params
 }
 
 // Serve starts the operator's main routine.
@@ -109,8 +112,8 @@ func (operator *Operator) Serve(port int) error {
 	}
 
 	// Start enclave
-	errGo("Enclave.Start", operator.enclave.Start)
-	log.Info("Operator.Serve: Enclave started")
+	errGo("Enclave.Run", func() error { return operator.enclave.Run(operator.params) })
+	log.Info("Operator.Serve: Enclave running")
 
 	bigBang, err := operator.contract.BigBang(nil)
 	if err != nil {

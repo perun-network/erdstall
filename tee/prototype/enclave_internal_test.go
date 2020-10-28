@@ -46,12 +46,11 @@ func TestEnclave(t *testing.T) {
 	t.Log("Subscribed to new blocks")
 
 	requiree.NoError(operator.DeployContracts(&params))
-	requiree.NoError(enc.SetParams(params))
 
 	ct := test.NewConcurrent(t)
 	// Start enclave routines
 	go ct.StageN("operator", 2, func(t test.ConcT) {
-		assert.NoError(enc.Start())
+		assert.NoError(enc.Run(params))
 	})
 
 	// Start mini-operator
@@ -104,7 +103,7 @@ func TestEnclave(t *testing.T) {
 	// Signalling the enclave to stop now, so that it doesn't start new epochs on
 	// the next block.
 	t.Log("Set Enclave to shutdown after next phase.")
-	enc.Stop()
+	enc.Shutdown()
 
 	t.Log("Adding 3 new blocks to seal next phase.")
 
