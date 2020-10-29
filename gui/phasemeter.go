@@ -22,7 +22,7 @@ type PhaseMeter struct {
 }
 
 func NewPhaseMeter(p tee.Parameters, g *gocui.Gui, view string) *PhaseMeter {
-	return &PhaseMeter{g: g, view: view, p: p, width: 4, mtx: new(sync.Mutex)}
+	return &PhaseMeter{g: g, view: view, p: p, width: 3, mtx: new(sync.Mutex)}
 }
 
 func (m *PhaseMeter) SetBlock(blockNum uint64) {
@@ -85,7 +85,7 @@ func fmtBlockNum(num uint64, w int, active bool) string {
 	}
 	fill := strings.Repeat(" ", int(w)-len(n))
 	if active {
-		return underline(n + fill)
+		return color(n+fill, RED)
 	}
 	return n + fill
 }

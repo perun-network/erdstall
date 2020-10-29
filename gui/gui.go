@@ -32,7 +32,9 @@ func RunGui(client *client.Client, events chan *client.Event) {
 		NewBalanceMeter(g, "balance")}
 
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
-		gui.getView("input").Clear()
+		view := gui.getView("input")
+		view.Clear()
+		view.SetCursor(0, 0)
 		return nil
 	}); err != nil {
 		panic(err)
@@ -66,7 +68,7 @@ func (gui *GUI) handleClientEvent(e *client.Event) error {
 	case client.SET_PARAMS:
 		out := gui.getView("status")
 		out.Clear()
-		fmt.Fprint(out, fmt.Sprintf("Contract %s TEE %s\nPowDepth %d PhaseDuration %d ResponseDuration %d\nInitBlock %d", e.Params.Contract.Hex(), e.Params.TEE.Hex(), e.Params.PowDepth, e.Params.PhaseDuration, e.Params.ResponseDuration, e.Params.InitBlock))
+		fmt.Fprint(out, fmt.Sprintf("Contract %s\nTEE %s\nPowDepth %d PhaseDuration %d ResponseDuration %d\nInitBlock %d", e.Params.Contract.Hex(), e.Params.TEE.Hex(), e.Params.PowDepth, e.Params.PhaseDuration, e.Params.ResponseDuration, e.Params.InitBlock))
 		gui.meter = NewPhaseMeter(e.Params, gui.g, "phase")
 	case client.SET_BALANCE:
 		gui.balance.SetBalance(e.Report.Balance)
@@ -179,17 +181,18 @@ func layout(g *gocui.Gui, client *client.Client) error {
 	maxW, maxH := g.Size()
 
 	outW := (maxW / 3) * 2 // TODO golden ratio
-	if v, err := g.SetView("status", 0, 0, outW, 3); err != nil {
+	if v, err := g.SetView("status", 0, 0, outW, 4); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Title = "Status"
 	}
-	if v, err := g.SetView("out", 0, 4, outW, maxH-4); err != nil {
+	if v, err := g.SetView("out", 0, 5, outW, maxH-4); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = "Log"
+		addr := client.Address().Hex()[:10]
+		v.Title = client.Config.UserName + fmt.Sprintf(" %s on %s", addr, client.Config.ChainURL)
 		v.Autoscroll = true
 	}
 	chainH := (maxH / 3) * 2
@@ -209,7 +212,7 @@ func layout(g *gocui.Gui, client *client.Client) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = fmt.Sprintf("%s @ %s", client.Address().Hex(), client.Config.ChainURL)
+		v.Title = "ETH Chain"
 		v.Autoscroll = true
 	}
 

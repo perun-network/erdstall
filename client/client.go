@@ -450,16 +450,16 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 	}
 	if rec.Status == types.ReceiptStatusFailed {
 		status <- &CmdStatus{Err: errors.New("Exit TX: Receipt failed")}
-		reason, err := errorReason(c.Ctx(), &c.ethClient.ContractBackend, tx, rec.BlockNumber, c.ethClient.Account())
+		/*reason, err := errorReason(c.Ctx(), &c.ethClient.ContractBackend, tx, rec.BlockNumber, c.ethClient.Account())
 		if err != nil {
 			c.logOnChain("Unknown revert reason: %v", err)
 		} else {
 			c.logOnChain("Exit TX revert reason: %s", reason)
-		}
+		}*/
 		return
 	}
 	c.logOnChain("Exit mined in block #%d", rec.BlockNumber.Uint64())
-	// End of exit is begin of next
+	// Wait for the end of the Exit epoch before sending the Withdraw TX.
 	endExitBlock := c.params.EpochStartBlock(c.params.ExitEpoch(rec.BlockNumber.Uint64()) + 1)
 	if err := c.ethClient.WaitForBlock(c.Ctx(), endExitBlock); err != nil {
 		status <- &CmdStatus{Err: err}
