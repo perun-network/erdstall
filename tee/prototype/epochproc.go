@@ -204,6 +204,7 @@ func (e *Enclave) generateDepositProof(depEpoch *Epoch, acc common.Address) (*te
 	if err != nil {
 		return nil, fmt.Errorf("signing deposit proof: %w", err)
 	}
+	sig[64] += 27
 
 	return &tee.DepositProof{
 		Balance: b,
@@ -250,6 +251,7 @@ func (e *Enclave) signBalanceProof(b tee.Balance) (*tee.BalanceProof, error) {
 	if err != nil {
 		return nil, fmt.Errorf("signing balance proof: %w", err)
 	}
+	sig[64] += 27
 	return &tee.BalanceProof{
 		Balance: b,
 		Sig:     sig,

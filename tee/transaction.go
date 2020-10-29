@@ -29,6 +29,7 @@ func (t *Transaction) Hash() common.Hash {
 
 // A TextSigner can sign messages. It's usually a wallet like an accounts.Wallet
 type TextSigner interface {
+	// SignText returns a signature with 'v' value of 0 or 1.
 	SignText(account accounts.Account, text []byte) ([]byte, error)
 }
 
@@ -45,6 +46,7 @@ func (t *Transaction) Sign(contract common.Address, account accounts.Account, w 
 	if err != nil {
 		return fmt.Errorf("signing tx hash: %w", err)
 	}
+	sig[64] += 27
 
 	t.Sig = sig
 	return nil
