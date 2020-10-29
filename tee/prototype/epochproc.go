@@ -112,17 +112,17 @@ func (e *Enclave) txRoutine(
 
 		case tx := <-txs:
 			txCounter++
-			log.WithFields(logrus.Fields{
+			log := log.WithFields(logrus.Fields{
 				"sender":    tx.Sender.String(),
 				"recipient": tx.Recipient.String(),
 				"nonce":     tx.Nonce,
 				"amount":    tx.Amount,
-			}).Debug("txRoutine: TX received, applying...")
+			})
+			log.Debug("txRoutine: TX received, applying...")
 			stagedTxs.cacheTx(tx)
 			err := e.applyEpochTx(txEpoch, tx)
 			if err != nil {
 				log.Errorf("txRoutine: Error applying tx: %v", err)
-				return fmt.Errorf("applying epoch %d Balances: %w", txEpoch.Number, err)
 			}
 		}
 	}
@@ -231,7 +231,7 @@ func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) ([]*tee.BalanceProof, er
 
 		bp, err := e.signBalanceProof(b)
 		if err != nil {
-			return nil, fmt.Errorf("generating balance proofs: %w", err)
+			return nil, fmt.Errorf("generating balance proof: %w", err)
 		}
 		balProofs[i] = bp
 		i++
