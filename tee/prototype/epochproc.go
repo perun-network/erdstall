@@ -80,9 +80,9 @@ func (e *Enclave) txRoutine(
 	txs <-chan *tee.Transaction,
 	txEpoch *Epoch,
 ) error {
-	log := log.WithField("epoch", "<not started>")
+	log := log.WithField("txEpoch", "<not started>")
 	if txEpoch != nil {
-		log = log.WithField("epoch", txEpoch.Number)
+		log = log.WithField("txEpoch", txEpoch.Number)
 	}
 
 	txCounter := 0
