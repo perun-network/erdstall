@@ -10,7 +10,6 @@ import (
 type ProgressBar struct {
 	Title string
 	// < 0 means unknown
-	Width    int
 	Status   []string
 	finished bool
 

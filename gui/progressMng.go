@@ -15,7 +15,7 @@ type ProgressMng struct {
 	max  int
 	bars []*ProgressBar
 
-	mtx *sync.Mutex
+	mtx *sync.Mutex // for the whole object
 }
 
 func (m *ProgressMng) Add(title string) *ProgressBar {
@@ -24,7 +24,6 @@ func (m *ProgressMng) Add(title string) *ProgressBar {
 	defer m.mtx.Unlock()
 	bar := &ProgressBar{
 		Title: title,
-		Width: 10,
 		mtx:   &sync.Mutex{},
 	}
 	if len(m.bars) >= m.max {

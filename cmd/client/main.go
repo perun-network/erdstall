@@ -22,14 +22,13 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	chainEvents := make(chan string, 10)           // GUI event pipe
-	clEvents := make(chan *client.ClientEvent, 10) // GUI event pipe
+	events := make(chan *client.Event, 10) // GUI event pipe
 
 	cb := perunchannel.NewContractBackend(eb, perunhd.NewTransactor(wallet.Wallet.Wallet()))
-	conn := client.NewRPC("127.0.0.1", 8080)                 // Operator conn
-	ethClient := eth.NewClient(cb, wallet.Acc.Account)       // ETHChain conn
-	client := client.NewClient(cfg, conn, ethClient, wallet) // Erdstall protocol client
-	go gui.RunGui(client, clEvents, chainEvents)             // Run the GUI
+	rpc := client.NewRPC("127.0.0.1", 8080)                     // Operator conn
+	chain := eth.NewClient(cb, wallet.Acc.Account)              // ETHChain conn
+	client := client.NewClient(cfg, rpc, events, chain, wallet) // Erdstall protocol client
+	go gui.RunGui(client, events)                               // Run the GUI
 
-	client.Run(clEvents, chainEvents) // Run the protocol
+	client.Run() // Run the protocol
 }
