@@ -47,5 +47,9 @@ func NewWallet(mnemonic string, accountIndex uint) *Wallet {
 
 // SignText implements the tee.TextSigner interface.
 func (w *Wallet) SignText(acc accounts.Account, text []byte) (Sig, error) {
-	return w.Wallet.Wallet().SignText(w.Acc.Account, text)
+	sig, err := w.Wallet.Wallet().SignText(acc, text)
+	if sig[64] != 0 && sig[64] != 1 {
+		panic("Invalid v")
+	}
+	return sig, err
 }
