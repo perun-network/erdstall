@@ -85,10 +85,12 @@ func (e *Enclave) txRoutine(
 		log = log.WithField("epoch", txEpoch.Number)
 	}
 
+	txCounter := 0
 	stagedTxs := makeTxCache()
 	for {
 		select {
 		case exiters := <-exits:
+			log.Infof("txRoutine: processed %d TXs", txCounter)
 			log.Trace("txRoutine: exiters received")
 			// TODO: check for inconsistent deposits.
 			if err := noInconsistentExits(&stagedTxs, exiters); err != nil {
@@ -109,6 +111,7 @@ func (e *Enclave) txRoutine(
 			return nil
 
 		case tx := <-txs:
+			txCounter++
 			log.WithFields(logrus.Fields{
 				"sender":    tx.Sender.String(),
 				"recipient": tx.Recipient.String(),
