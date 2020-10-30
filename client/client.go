@@ -387,7 +387,7 @@ func (c *Client) BalanceProofWatcher() {
 			c.logProof("Balance Proof error: %v", err)
 			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
 		} else if proof.Balance.Epoch > oldEpoch {
-			c.logProof("Got Balance Proof for %v ETH in epoch %d", eth.WeiToEthFloat(proof.Balance.Value), proof.Balance.Epoch)
+			c.logProof("Proofed %v ETH in epoch %d", eth.WeiToEthFloat(proof.Balance.Value), proof.Balance.Epoch)
 			oldEpoch = proof.Balance.Epoch
 			c.balMtx.Lock()
 			c.balances[proof.Balance.Epoch] = EpochBalance{Balance: proof.Balance, Bal: &proof}

@@ -50,7 +50,7 @@ func (m BalanceMeter) Draw() {
 }
 
 func (m BalanceMeter) render() string {
-	str := fmt.Sprintf("You hold %s ETH and can ", bold(eth.WeiToEthFloat(m.balance).String()))
+	str := fmt.Sprintf("You hold %s ETH and\ncan ", bold(eth.WeiToEthFloat(m.balance).String()))
 
 	if m.exitPossible == nil {
 		return str + color("not withdraw", RED) + "."
