@@ -4,7 +4,7 @@
 	"EnclaveDerivationPath": "m/44'/60'/0'/0/0",
 	"OperatorDerivationPath": "m/44'/60'/0'/0/1",
 	"PhaseDuration": 3,
-	"ResponseDuration": 1,
+	"ResponseDuration": 0,
 	"PowDepth": 0,
 	"Port": 8080
 }
