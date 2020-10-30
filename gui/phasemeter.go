@@ -44,28 +44,14 @@ func (m PhaseMeter) Draw() {
 
 func (m PhaseMeter) render() string {
 	w := m.width * int(m.p.PhaseDuration)
-	//clrs := []int{BLUE, PURPLE, CYAN}
 	deposit := m.p.DepositEpoch(m.blockNum)
 	depositStart := m.p.EpochStartBlock(deposit)
-	//leftInEpoch := m.p.DepositEndBlock(deposit) - m.blockNum
-	//tx := m.p.TxEpoch(m.blockNum)
-	//info := fmt.Sprintf("Deposit epoch %d has %d block(s) left.", deposit, leftInEpoch)
 	epochs := fmtEpoch(deposit, w, 0) + "\n" + fmtEpoch(deposit, w, 1) + "\n" + fmtEpoch(deposit, w, 2)
-	blocks := fmtBlockNum(depositStart, m.width, m.blockNum == depositStart) +
-		fmtBlockNum(depositStart+1, m.width, m.blockNum == (depositStart+1)) +
-		fmtBlockNum(depositStart+2, m.width, m.blockNum == (depositStart+2))
+
+	blocks := fmtBlockNum(depositStart+1, m.width, m.blockNum == depositStart) +
+		fmtBlockNum(depositStart+2, m.width, m.blockNum == (depositStart+1)) +
+		fmtBlockNum(depositStart+3, m.width, m.blockNum == (depositStart+2))
 	return epochs + "\n" + strings.Repeat(" ", 6+w*2) + blocks
-
-	/*phase := strings.Repeat(colorBg(" ", clrs[deposit%3]), int(leftInEpoch)*m.width) +
-		strings.Repeat(colorBg(" ", clrs[(deposit+1)%3]), int(m.p.PhaseDuration)*m.width) +
-		strings.Repeat(colorBg(" ", clrs[(deposit+2)%3]), int(m.p.PhaseDuration)*m.width) +
-		strings.Repeat(" ", int(m.p.PhaseDuration-leftInEpoch))
-	return fmt.Sprintf("%s %s\nD  T  E", phase, info)*/
-
-	/*phase := strings.Repeat(colorBg(" ", ORANGE), int(m.p.PhaseDuration-leftInEpoch)*m.width) +
-		strings.Repeat(color(colorBg("#", RED), BLACK), m.width) +
-		strings.Repeat(colorBg(" ", GREEN), int(leftInEpoch-1)*m.width)
-	return fmt.Sprintf("%s%s%s\nDeposit           Tx                Exit", phase, phase, phase)*/
 }
 
 func fmtEpoch(num uint64, w int, offset int) string {
