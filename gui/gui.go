@@ -212,7 +212,7 @@ func layout(g *gocui.Gui, client *client.Client) error {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = "ETH Chain"
+		v.Title = "Log"
 		v.Autoscroll = true
 	}
 
