@@ -10,16 +10,17 @@ import (
 
 	"github.com/jroimartin/gocui"
 	"github.com/perun-network/erdstall/client"
-	"github.com/perun-network/erdstall/eth"
 )
 
 type GUI struct {
-	g      *gocui.Gui
-	client *client.Client
-	bars   *ProgressMng
+	g       *gocui.Gui
+	client  *client.Client
+	bars    *ProgressMng
+	meter   *PhaseMeter
+	balance *BalanceMeter
 }
 
-func RunGui(client *client.Client, clEvents chan *client.ClientEvent, chainEvents chan string) {
+func RunGui(client *client.Client, events chan *client.Event) {
 	g, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		panic(err)
@@ -27,9 +28,15 @@ func RunGui(client *client.Client, clEvents chan *client.ClientEvent, chainEvent
 	defer g.Close()
 
 	g.SetManagerFunc(func(g *gocui.Gui) error { return layout(g, client) })
-	gui := &GUI{g, client, &ProgressMng{g, "cmds", 3, nil, &sync.Mutex{}}}
+	gui := &GUI{g, client, &ProgressMng{g, "cmds", 10, nil, &sync.Mutex{}}, nil,
+		NewBalanceMeter(g, "balance")}
 
-	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
+	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
+		view := gui.getView("input")
+		view.Clear()
+		view.SetCursor(0, 0)
+		return nil
+	}); err != nil {
 		panic(err)
 	}
 	if err := g.SetKeybinding("", gocui.KeyEnter, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
@@ -42,28 +49,11 @@ func RunGui(client *client.Client, clEvents chan *client.ClientEvent, chainEvent
 	}
 
 	go func() {
-		for {
-			select {
-			case e := <-chainEvents:
-				gui.g.Update(func(g *gocui.Gui) error {
-					if g != gui.g {
-						panic("Wrong gui object")
-					}
-					if strings.HasPrefix(e, "new Block") {
-
-					} else if strings.HasPrefix(e, "New Epoch") {
-						gui.logChain("🍵  ", e, "\n")
-					} else {
-						gui.logChain("⛓  ", e, "\n")
-					}
-
-					return nil
-				})
-			case e := <-clEvents:
-				gui.g.Update(func(g *gocui.Gui) error {
-					return gui.handleClientEvent(e)
-				})
-			}
+		for _e := range events {
+			e := _e
+			gui.g.Update(func(g *gocui.Gui) error {
+				return gui.handleClientEvent(e)
+			})
 		}
 	}()
 
@@ -73,21 +63,35 @@ func RunGui(client *client.Client, clEvents chan *client.ClientEvent, chainEvent
 }
 
 // must be called in a g.Update
-func (gui *GUI) handleClientEvent(e *client.ClientEvent) error {
+func (gui *GUI) handleClientEvent(e *client.Event) error {
 	switch e.Type {
 	case client.SET_PARAMS:
 		out := gui.getView("status")
 		out.Clear()
-		fmt.Fprint(out, fmt.Sprintf("Contract %s TEE %s\nPowDepth %d PhaseDuration %d ResponseDuration %d\nInitBlock %d", e.Params.Contract.Hex(), e.Params.TEE.Hex(), e.Params.PowDepth, e.Params.PhaseDuration, e.Params.ResponseDuration, e.Params.InitBlock))
+		fmt.Fprint(out, fmt.Sprintf("Contract %s\nTEE %s\nPowDepth %d PhaseDuration %d ResponseDuration %d\nInitBlock %d", e.Params.Contract.Hex(), e.Params.TEE.Hex(), e.Params.PowDepth, e.Params.PhaseDuration, e.Params.ResponseDuration, e.Params.InitBlock))
+		gui.meter = NewPhaseMeter(e.Params, gui.g, "phase")
 	case client.SET_BALANCE:
-		out := gui.getView("balance")
-		out.Clear()
-		fmt.Fprintf(out, "You hold %s ETH.", bold(eth.WeiToEthFloat(e.Report.Balance).String()))
+		gui.balance.SetBalance(e.Report.Balance)
+		gui.balance.Draw()
 	case client.SET_OP_TRUST:
 		out := gui.getView("status")
 		out.Title = fmt.Sprintf("Operator is %s", e.OpTrust)
 	case client.BENCH:
 		gui.logOut(e.Result.String(), "\n")
+	case client.NEW_BLOCK:
+		if gui.meter != nil {
+			gui.meter.SetBlock(e.BlockNum)
+			gui.meter.Draw()
+		}
+	case client.CHAIN_MSG:
+		gui.logChain(e.Message, "\n")
+	case client.NEW_EPOCH:
+		// ignored
+	case client.SET_EXIT_AVAIL:
+		gui.balance.SetExitPossible(e.ExitAvailable.Clone())
+		gui.balance.Draw()
+	default:
+		panic(fmt.Sprintf("Unhandled enum case: %d", e.Type))
 	}
 	return nil
 }
@@ -161,6 +165,12 @@ func (gui *GUI) eval(input string) (chan *client.CmdStatus, error) {
 		go gui.client.CmdBench(status, fs[1:]...)
 	case "leave":
 		go gui.client.CmdLeave(status, fs[1:]...)
+	case "exit":
+		fallthrough
+	case "quit":
+		gui.client.Close()
+		gui.g.Close()
+		select {}
 	default:
 		return nil, fmt.Errorf("Unknow command: '%s'", cmd)
 	}
@@ -171,17 +181,18 @@ func layout(g *gocui.Gui, client *client.Client) error {
 	maxW, maxH := g.Size()
 
 	outW := (maxW / 3) * 2 // TODO golden ratio
-	if v, err := g.SetView("status", 0, 0, outW, 3); err != nil {
+	if v, err := g.SetView("status", 0, 0, outW, 4); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Title = "Status"
 	}
-	if v, err := g.SetView("out", 0, 4, outW, maxH-4); err != nil {
+	if v, err := g.SetView("out", 0, 5, outW, maxH-4); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = "Log"
+		addr := client.Address().Hex()[:10]
+		v.Title = client.Config.UserName + fmt.Sprintf(" %s on %s", addr, client.Config.ChainURL)
 		v.Autoscroll = true
 	}
 	chainH := (maxH / 3) * 2
@@ -191,11 +202,17 @@ func layout(g *gocui.Gui, client *client.Client) error {
 		}
 		v.Title = "Balance"
 	}
-	if v, err := g.SetView("chain", outW+1, 4, maxW-1, chainH); err != nil {
+	if v, err := g.SetView("phase", outW+1, 4, maxW-1, 9); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = fmt.Sprintf("PK: %s @ %s", client.Address().Hex(), client.Config.ChainURL)
+		v.Title = "Phase meter"
+	}
+	if v, err := g.SetView("chain", outW+1, 10, maxW-1, chainH); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		v.Title = "Log"
 		v.Autoscroll = true
 	}
 
@@ -254,9 +271,14 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 
 // ANSI Escape colors.
 const (
-	RED    = 31
-	GREEN  = 32
-	ORANGE = 33
+	BLACK = iota
+	RED
+	GREEN
+	ORANGE
+	BLUE
+	PURPLE
+	CYAN
+	GRAY
 )
 
 func bold(msg string) string {
@@ -264,13 +286,22 @@ func bold(msg string) string {
 }
 
 func color(msg string, clr int) string {
-	return fmt.Sprintf("\033[%d;%dm%s\033[0m", clr, 1, msg)
+	return fmt.Sprintf("\033[3%d;%dm%s\033[0m", clr, 1, msg)
 }
 
-const helpText = `Erdstall client CLI
-Available commands:
+func colorBg(msg string, clr int) string {
+	return fmt.Sprintf("\033[4%d;%dm%s\033[0m", clr, 1, msg)
+}
+
+func underline(msg string) string {
+	return fmt.Sprintf("\033[4m%s\033[0m", msg)
+}
+
+const helpText = `Available commands:
  help
    Prints this page.
+ credits
+   Hommage to the creators.
  bench <runs>
    Runs a benchmark of sending <runs> off-chain TX.
  deposit <amount>
@@ -279,16 +310,18 @@ Available commands:
    Sends <amount> to <receiver>.
  leave
    Withdraws all funds and exits the network.
- version
+ exit, quit
+   Close the client.
 `
 
 const creditText = `Developed by Perun Network for the 2020 ETH Hackathon.
 
   Norbert Dzikowski  - Enclave, Intel SGX
-  Matthias Geihs	 - Operator Node, Presantation
-  Steffen Rattay	 - GrapheneOS, Presantation
+  Matthias Geihs	 - Operator Node, Presentation
+  Steffen Rattay	 - GrapheneOS, Presentation
   Sebastian Stammler - Enclave, Contract, Speaker
   Oliver Tale-Yazdi  - Client, GUI
 
-Checkout our other projects at https://perun.network
+Find the code at https://github.com/perun-network/erdstall
+and checkout our projects https://perun.network
 `
