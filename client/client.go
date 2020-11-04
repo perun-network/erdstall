@@ -231,22 +231,35 @@ func (c *Client) createTx(receiver common.Address, amount *big.Int) (tee.Transac
 
 func (c *Client) CmdBench(status chan *CmdStatus, args ...string) {
 	defer close(status)
-	if len(args) > 1 {
-		status <- &CmdStatus{Err: errors.New("Command 'bench' can have argument: <runs>")}
+	if len(args) > 3 {
+		status <- &CmdStatus{Err: errors.New("Command 'bench' can have arguments: <runs> <address> <amount>")}
 		return
 	}
 	var err error
 	n := 1000
-	if len(args) == 1 {
+	if len(args) >= 1 {
 		n, err = strconv.Atoi(args[0])
 		if err != nil {
 			status <- &CmdStatus{Err: fmt.Errorf("Could not parse <runs> as int: %s", args[0])}
 			return
 		}
 	}
+	a := c.Address()
+	if len(args) >= 2 {
+		a = common.HexToAddress(args[1])
+	}
+	amount := big.NewInt(1)
+	if len(args) >= 3 {
+		totalAmount, err := strconv.Atoi(args[2])
+		if err != nil {
+			status <- &CmdStatus{Err: fmt.Errorf("Could not parse <amount> as int: %s: %w", args[2], err)}
+			return
+		}
+		amount = new(big.Int).Div(eth.EthToWeiInt(int64(totalAmount)), big.NewInt(int64(n)))
+	}
 	status <- &CmdStatus{Msg: fmt.Sprintf("Sending %d payments", n)}
 	result, err := Benchmark(n, func() error {
-		tx, err := c.createTx(c.Address(), big.NewInt(1)) // 1 WEI
+		tx, err := c.createTx(a, amount)
 		if err != nil {
 			return err
 		}
