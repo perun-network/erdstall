@@ -20,8 +20,6 @@ import (
 
 const gasLimit = 2000000
 const defaultContextTimeout = 10 * time.Second
-const proofResponseTimeout = 10 * time.Second
-const proofRequestInterval = 500 * time.Millisecond
 
 func newDefaultContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), defaultContextTimeout)
@@ -136,7 +134,9 @@ func (u *User) Transfer(receiver *User, amount int64) {
 		Amount:    big.NewInt(amount),
 	}
 
-	tx.Sign(u.contractAddress, u.Account(), u.wallet)
+	if err := tx.Sign(u.contractAddress, u.Account(), u.wallet); err != nil {
+		u.Fatal("Signing transaction:", err)
+	}
 
 	err = u.rpcClient.Call("RemoteEnclave.AddTransaction", tx, nil)
 	if err != nil {

@@ -80,7 +80,7 @@ func fmtEpoch(num uint64, w int, offset int) string {
 
 func fmtBlockNum(num uint64, w int, active bool) string {
 	n := fmt.Sprintf("%d", num)
-	if len(n) > int(w) || num < 0 {
+	if len(n) > int(w) {
 		return strings.Repeat("?", int(w))
 	}
 	fill := strings.Repeat(" ", int(w)-len(n))

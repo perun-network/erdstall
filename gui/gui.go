@@ -34,8 +34,7 @@ func RunGui(client *client.Client, events chan *client.Event) {
 	if err := g.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, func(g *gocui.Gui, v *gocui.View) error {
 		view := gui.getView("input")
 		view.Clear()
-		view.SetCursor(0, 0)
-		return nil
+		return view.SetCursor(0, 0)
 	}); err != nil {
 		panic(err)
 	}
@@ -68,7 +67,7 @@ func (gui *GUI) handleClientEvent(e *client.Event) error {
 	case client.SET_PARAMS:
 		out := gui.getView("status")
 		out.Clear()
-		fmt.Fprint(out, fmt.Sprintf("Contract %s\nTEE %s\nPowDepth %d PhaseDuration %d ResponseDuration %d\nInitBlock %d", e.Params.Contract.Hex(), e.Params.TEE.Hex(), e.Params.PowDepth, e.Params.PhaseDuration, e.Params.ResponseDuration, e.Params.InitBlock))
+		fmt.Fprintf(out, "Contract %s\nTEE %s\nPowDepth %d PhaseDuration %d ResponseDuration %d\nInitBlock %d", e.Params.Contract.Hex(), e.Params.TEE.Hex(), e.Params.PowDepth, e.Params.PhaseDuration, e.Params.ResponseDuration, e.Params.InitBlock)
 		gui.meter = NewPhaseMeter(e.Params, gui.g, "phase")
 	case client.SET_BALANCE:
 		gui.balance.SetBalance(e.Report.Balance)
@@ -102,13 +101,11 @@ func (gui *GUI) enter(v *gocui.View) error {
 	if strings.HasPrefix(input, "help") {
 		gui.logOut(helpText)
 		v.Clear()
-		v.SetCursor(0, 0)
-		return nil
+		return v.SetCursor(0, 0)
 	} else if strings.HasPrefix(input, "credits") {
 		gui.logOut(creditText)
 		v.Clear()
-		v.SetCursor(0, 0)
-		return nil
+		return v.SetCursor(0, 0)
 	}
 
 	// Responsive gui -> do not block till command is finished.
@@ -117,35 +114,31 @@ func (gui *GUI) enter(v *gocui.View) error {
 			gui.logOut("✗ ", color(err.Error(), RED), "\n")
 		} else {
 			bar := gui.bars.Add(input)
-			for {
-				select {
-				case s := <-status:
-					if s == nil {
-						bar.Finish(color("Done", GREEN))
-						gui.logOut("✓ ", color(input, GREEN), "\n")
-						gui.bars.Render()
-						return
-					}
-					if s.Err != nil {
-						bar.Finish(color("Error", RED))
-						gui.logOut("✗ ", color(s.Err.Error(), RED), "\n")
-						gui.bars.Render()
-						return
-					} else if len(s.War) != 0 {
-						bar.Add(color(s.War, ORANGE))
-						gui.bars.Render()
-					} else {
-						bar.Add(s.Msg)
-						gui.bars.Render()
-					}
+			for s := range status {
+				if s == nil {
+					bar.Finish(color("Done", GREEN))
+					gui.logOut("✓ ", color(input, GREEN), "\n")
+					gui.bars.Render()
+					return
+				}
+				if s.Err != nil {
+					bar.Finish(color("Error", RED))
+					gui.logOut("✗ ", color(s.Err.Error(), RED), "\n")
+					gui.bars.Render()
+					return
+				} else if len(s.War) != 0 {
+					bar.Add(color(s.War, ORANGE))
+					gui.bars.Render()
+				} else {
+					bar.Add(s.Msg)
+					gui.bars.Render()
 				}
 			}
 		}
 	}()
 
 	v.Clear()
-	v.SetCursor(0, 0)
-	return nil
+	return v.SetCursor(0, 0)
 }
 
 func (gui *GUI) eval(input string) (chan *client.CmdStatus, error) {
@@ -265,10 +258,6 @@ func (gui *GUI) getView(name string) *gocui.View {
 	return out
 }
 
-func quit(g *gocui.Gui, v *gocui.View) error {
-	return gocui.ErrQuit
-}
-
 // ANSI Escape colors.
 const (
 	BLACK = iota
@@ -291,10 +280,6 @@ func color(msg string, clr int) string {
 
 func colorBg(msg string, clr int) string {
 	return fmt.Sprintf("\033[4%d;%dm%s\033[0m", clr, 1, msg)
-}
-
-func underline(msg string) string {
-	return fmt.Sprintf("\033[4m%s\033[0m", msg)
 }
 
 const helpText = `Available commands:

@@ -286,7 +286,7 @@ func (cl *Client) SubscribeToDeposited(ctx context.Context, contract *bindings.E
 		return err
 	}
 	it, err := contract.FilterDeposited(fOpts, epochs, accs)
-	defer it.Close()
+	defer it.Close() // nolint: staticcheck
 	if err != nil {
 		return err
 	}

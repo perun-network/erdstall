@@ -178,7 +178,7 @@ func (e *environment) WaitPhase() {
 
 func (e *environment) Shutdown() {
 	if e.cmd != nil {
-		e.cmd.Process.Kill()
+		e.cmd.Process.Kill() // nolint: errcheck
 	}
 }
 
