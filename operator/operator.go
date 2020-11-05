@@ -100,8 +100,8 @@ func Setup(cfg *Config) *Operator {
 
 // Serve starts the operator's main routine.
 func (operator *Operator) Serve(port int) error {
+	// Handle errors, print them as they occurr
 	errg := errors.NewGatherer()
-
 	errGo := func(name string, fn func() error) {
 		errg.Go(func() error {
 			err := fn()
@@ -116,66 +116,78 @@ func (operator *Operator) Serve(port int) error {
 	errGo("Enclave.Run", func() error { return operator.enclave.Run(operator.params) })
 	log.Info("Operator.Serve: Enclave running")
 
+	// Handle Ethereum blocks
+	errGo("Op.BlockSub", operator.handleBlocks)
+	log.Info("Operator.Serve: Block subcription started")
+
+	// Handle deposit proofs
+	errGo("Op.DepositProofs", operator.handleDepositProofs)
+	log.Info("Operator.Serve: Deposit proof handling started")
+
+	// Handle balance proofs
+	errGo("Op.BalanceProofs", operator.handleBalanceProofs)
+	log.Info("Operator.Serve: Balance proof handling started")
+
+	// Handle on-chain challenges
+	//TODO
+
+	// Handle RPC
+	errGo("Op.RPCServe", func() error { return operator.handleRPC(port) })
+	log.Info("Operator.Serve: RPC handling started")
+
+	return errg.Wait()
+}
+
+func (operator *Operator) handleBlocks() error {
 	bigBang, err := operator.contract.BigBang(nil)
 	if err != nil {
 		return fmt.Errorf("reading BigBang: %w", err)
 	}
-
-	// Ethereum block handling
 	blockSub, err := operator.ethClient.SubscribeToBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
 	if err != nil {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}
-	errGo("Op.BlockSub", func() error {
-		defer blockSub.Unsubscribe()
-		for b := range blockSub.Blocks() {
-			log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
-			if err := operator.enclave.ProcessBlocks(b); err != nil {
-				//TODO check for ErrEnclaveStopped error, see enclave internal tests
-				return err
-			}
-			log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
+	defer blockSub.Unsubscribe()
+	for b := range blockSub.Blocks() {
+		log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
+		if err := operator.enclave.ProcessBlocks(b); err != nil {
+			//TODO check for ErrEnclaveStopped error, see enclave internal tests
+			return err
 		}
-		return nil
-	})
-	log.Info("Operator.Serve: Block subcription started")
+		log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
+	}
+	return nil
+}
 
-	// Handle deposit proofs
-	errGo("Op.DepositProofs", func() error {
-		for {
-			dps, err := operator.enclave.DepositProofs()
-			if err != nil {
-				return fmt.Errorf("retrieving deposit proofs: %w", err)
-			}
-			if len(dps) > 0 {
-				log.Debugf("Operator.Serve: Retrieved %d deposit proofs", len(dps))
-			}
-			operator.depositProofs.AddAll(dps)
+func (operator *Operator) handleDepositProofs() error {
+	for {
+		dps, err := operator.enclave.DepositProofs()
+		if err != nil {
+			return fmt.Errorf("retrieving deposit proofs: %w", err)
 		}
-	})
-	log.Info("Operator.Serve: Deposit proof handling started")
-
-	// Handle balance proofs
-	errGo("Op.BalanceProofs", func() error {
-		for {
-			bps, err := operator.enclave.BalanceProofs()
-			if err != nil {
-				return fmt.Errorf("retrieving balance proofs: %w", err)
-			}
-			if len(bps) > 0 {
-				log.Debugf("Operator.Serve: Retrieved %d balance proofs", len(bps))
-			}
-			operator.balanceProofs.AddAll(bps)
+		if len(dps) > 0 {
+			log.Debugf("Operator.Serve: Retrieved %d deposit proofs", len(dps))
 		}
-	})
-	log.Info("Operator.Serve: Balance proof handling started")
+		operator.depositProofs.AddAll(dps)
+	}
+}
 
-	//TODO: operator handles on-chain challenge events
+func (operator *Operator) handleBalanceProofs() error {
+	for {
+		bps, err := operator.enclave.BalanceProofs()
+		if err != nil {
+			return fmt.Errorf("retrieving balance proofs: %w", err)
+		}
+		if len(bps) > 0 {
+			log.Debugf("Operator.Serve: Retrieved %d balance proofs", len(bps))
+		}
+		operator.balanceProofs.AddAll(bps)
+	}
+}
 
-	// RPC handling
+func (operator *Operator) handleRPC(port int) error {
 	remoteEnclave := newRemoteEnclave(operator)
-	err = rpc.Register(remoteEnclave)
-	if err != nil {
+	if err := rpc.Register(remoteEnclave); err != nil {
 		return fmt.Errorf("registering remote enclave interface: %w", err)
 	}
 	rpc.HandleHTTP()
@@ -184,11 +196,7 @@ func (operator *Operator) Serve(port int) error {
 	if err != nil {
 		return fmt.Errorf("binding to socket: %w", err)
 	}
-
-	errGo("Op.RPCServe", func() error { return http.Serve(l, nil) })
-	log.Info("Operator.Serve: RPC handling started")
-
-	return errg.Wait()
+	return http.Serve(l, nil)
 }
 
 type depositProofs struct {
