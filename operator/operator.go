@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -130,6 +129,8 @@ func (operator *Operator) Serve(port int) error {
 
 	// Handle on-chain challenges
 	//TODO
+	// errGo("Op.Challenges", operator.handleChallenges)
+	// log.Info("Operator.Serve: Challenge handling started")
 
 	// Handle RPC
 	errGo("Op.RPCServe", func() error { return operator.handleRPC(port) })
@@ -199,67 +200,6 @@ func (operator *Operator) handleRPC(port int) error {
 	return http.Serve(l, nil)
 }
 
-type depositProofs struct {
-	mu      sync.RWMutex
-	entries map[common.Address]*tee.DepositProof
-}
-
-func newDepositProofs() *depositProofs {
-	return &depositProofs{entries: make(map[common.Address]*tee.DepositProof)}
-}
-
-// Get gets the deposit proof for the given user, threadsafe.
-func (dps *depositProofs) Get(user common.Address) (*tee.DepositProof, bool) {
-	dps.mu.RLock()
-	defer dps.mu.RUnlock()
-
-	dp, ok := dps.entries[user]
-
-	return dp, ok
-}
-
-// AddAll adds the given deposit proofs, threadsafe.
-func (dps *depositProofs) AddAll(in []*tee.DepositProof) {
-	dps.mu.Lock()
-	defer dps.mu.Unlock()
-
-	for _, dp := range in {
-		dps.entries[dp.Balance.Account] = dp
-	}
-}
-
-type balanceProofs struct {
-	mu      sync.RWMutex
-	entries map[common.Address]*tee.BalanceProof
-}
-
-func newBalanceProofs() *balanceProofs {
-	return &balanceProofs{entries: make(map[common.Address]*tee.BalanceProof)}
-}
-
-// Get gets the balance proof for the given user, threadsafe.
-func (bps *balanceProofs) Get(user common.Address) (*tee.BalanceProof, bool) {
-	bps.mu.RLock()
-	defer bps.mu.RUnlock()
-
-	bp, ok := bps.entries[user]
-
-	return bp, ok
-}
-
-// AddAll adds the given balance proofs, threadsafe.
-func (bps *balanceProofs) AddAll(in []*tee.BalanceProof) {
-	bps.mu.Lock()
-	defer bps.mu.Unlock()
-
-	for _, bp := range in {
-		bps.entries[bp.Balance.Account] = bp
-	}
-}
-
-const gasLimit = 2000000
-const defaultContextTimeout = 10 * time.Second
-
 // AssertNoError logs the error and exits if the error is not nil.
 func AssertNoError(err error) {
 	if err != nil {
@@ -269,5 +209,6 @@ func AssertNoError(err error) {
 
 // NewDefaultContext creates a default context for the operator.
 func NewDefaultContext() (context.Context, context.CancelFunc) {
+	const defaultContextTimeout = 10 * time.Second
 	return context.WithTimeout(context.Background(), defaultContextTimeout)
 }
