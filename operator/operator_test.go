@@ -75,6 +75,23 @@ func TestOperator(t *testing.T) {
 	user2.BalanceProof()
 	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
+	// challenge response
+	sub, exitEvents := user1.SubscribeToExitEvents()
+	defer sub.Unsubscribe()
+	user1.Challenge()
+	onChainTransactionTimeout := time.Duration(blockTime*environment.operator.EnclaveParams().PhaseDuration) * time.Second
+
+	select {
+	case err := <-sub.Err():
+		user1.Fatalf("exit event subscription error: %v", err)
+	case exitEvent := <-exitEvents:
+		if exitEvent.Account != user1.Address() {
+			user1.Errorf("invalid account, expected %v, got %v", user1.Address().String(), exitEvent.Account.String())
+		}
+	case <-time.After(onChainTransactionTimeout):
+		user1.Fatalf("exit event timeout")
+	}
+
 	// // exit
 	// user1.Exit()
 	// user2.Exit()
@@ -95,7 +112,7 @@ type environment struct {
 	enclaveParameters tee.Parameters
 }
 
-const blockTime = 1
+const blockTime = 1 // block mining interval in seconds
 
 func initEnvironment(t *testing.T) *environment {
 	errg := errors.NewGatherer()
