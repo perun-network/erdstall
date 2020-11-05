@@ -31,6 +31,11 @@ type Operator struct {
 	contract *bindings.Erdstall
 }
 
+// EnclaveParams returns the enclave parameters.
+func (operator *Operator) EnclaveParams() tee.Parameters {
+	return operator.params
+}
+
 // New instantiates an operator with the given parameters.
 func New(
 	enclave tee.Enclave,
@@ -91,10 +96,6 @@ func Setup(cfg *Config) *Operator {
 	AssertNoError(err)
 
 	return operator
-}
-
-func (operator *Operator) Params() tee.Parameters {
-	return operator.params
 }
 
 // Serve starts the operator's main routine.

@@ -120,7 +120,7 @@ func initEnvironment(t *testing.T) *environment {
 	}
 
 	operator := Setup(cfg)
-	params := operator.Params()
+	params := operator.EnclaveParams()
 	log.Info("operator_test.initEnvironment: Created operator")
 	errg.Go(func() error {
 		return operator.Serve(cfg.Port)
