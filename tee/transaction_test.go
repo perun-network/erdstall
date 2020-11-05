@@ -1,15 +1,12 @@
 package tee_test
 
 import (
-	"math/big"
-	"math/rand"
 	"testing"
 
+	ttest "github.com/perun-network/erdstall/tee/test"
 	"perun.network/go-perun/backend/ethereum/wallet/hd"
-	wtest "perun.network/go-perun/backend/ethereum/wallet/test"
 	"perun.network/go-perun/pkg/test"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 
 	"github.com/perun-network/erdstall/eth"
@@ -25,23 +22,13 @@ func TestTransaction_SignVerify(t *testing.T) {
 	sender, err := w.NewAccount()
 	require.NoError(err)
 
-	contract := newRandomAddress(rng)
+	contract := ttest.NewRandomAddress(rng)
 
-	tx := tee.Transaction{
-		Nonce:     uint64(rng.Int63()),
-		Epoch:     uint64(rng.Int63()),
-		Sender:    sender.Account.Address,
-		Recipient: newRandomAddress(rng),
-		Amount:    big.NewInt(rng.Int63()),
-	}
+	tx := ttest.NewTxFrom(rng, sender.Account.Address)
 
 	require.NoError(tx.Sign(contract, sender.Account, hdw))
 
-	ok, err := tee.VerifyTransaction(contract, tx)
+	ok, err := tee.VerifyTransaction(contract, *tx)
 	require.True(ok)
 	require.NoError(err)
-}
-
-func newRandomAddress(rng *rand.Rand) common.Address {
-	return common.Address(wtest.NewRandomAddress(rng))
 }
