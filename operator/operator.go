@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -9,10 +10,12 @@ import (
 	"net/rpc"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
-	"perun.network/go-perun/pkg/errors"
+	perrors "perun.network/go-perun/pkg/errors"
 
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
@@ -100,7 +103,7 @@ func Setup(cfg *Config) *Operator {
 // Serve starts the operator's main routine.
 func (operator *Operator) Serve(port int) error {
 	// Handle errors, print them as they occurr
-	errg := errors.NewGatherer()
+	errg := perrors.NewGatherer()
 	errGo := func(name string, fn func() error) {
 		errg.Go(func() error {
 			err := fn()
@@ -119,6 +122,10 @@ func (operator *Operator) Serve(port int) error {
 	errGo("Op.BlockSub", operator.handleBlocks)
 	log.Info("Operator.Serve: Block subcription started")
 
+	// Handle on-chain challenges
+	errGo("Op.Challenges", operator.handleChallenges)
+	log.Info("Operator.Serve: Challenge handling started")
+
 	// Handle deposit proofs
 	errGo("Op.DepositProofs", operator.handleDepositProofs)
 	log.Info("Operator.Serve: Deposit proof handling started")
@@ -126,11 +133,6 @@ func (operator *Operator) Serve(port int) error {
 	// Handle balance proofs
 	errGo("Op.BalanceProofs", operator.handleBalanceProofs)
 	log.Info("Operator.Serve: Balance proof handling started")
-
-	// Handle on-chain challenges
-	//TODO
-	// errGo("Op.Challenges", operator.handleChallenges)
-	// log.Info("Operator.Serve: Challenge handling started")
 
 	// Handle RPC
 	errGo("Op.RPCServe", func() error { return operator.handleRPC(port) })
@@ -157,6 +159,78 @@ func (operator *Operator) handleBlocks() error {
 		}
 		log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
 	}
+	return nil
+}
+
+func (operator *Operator) handleChallenges() error {
+	challenges := make(chan *bindings.ErdstallChallenged)
+	sub, err := operator.contract.WatchChallenged(nil, challenges, nil, nil)
+	if err != nil {
+		return fmt.Errorf("creating challenge subcription: %w", err)
+	}
+	defer sub.Unsubscribe()
+
+	for {
+		select {
+		case err := <-sub.Err():
+			return fmt.Errorf("subscription error: %w", err)
+
+		case _c := <-challenges:
+			c := challengedEvent(*_c)
+			log.Warnf("Operator.handleChallenges: Incoming challenge %v", c)
+
+			if err := operator.handleChallengedEvent(c); err != nil {
+				log.Errorf("Operator.handleChallenges: Failed to handle challenged event %v: %v", c, err)
+			}
+		}
+	}
+}
+
+func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
+	ctx, cancel := createDefaultContext()
+	defer cancel()
+
+	tr, err := operator.ethClient.NewTransactor(ctx, big.NewInt(0), eth.DefaultGasLimit, operator.ethClient.Account())
+	if err != nil {
+		return fmt.Errorf("creating transactor: %w", err)
+	}
+	tr.Context = ctx
+
+	balanceProof, ok := operator.balanceProofs.Get(c.Account)
+	if !ok {
+		return errors.New("getting balance proof")
+	}
+
+	balance := bindings.ErdstallBalance{
+		Epoch:   balanceProof.Balance.Epoch,
+		Account: balanceProof.Balance.Account,
+		Value:   balanceProof.Balance.Value,
+	}
+
+	tx, err := operator.contract.Exit(tr, balance, balanceProof.Sig)
+	if err != nil {
+		return fmt.Errorf("sending challenge response: %w", err)
+	}
+
+	// Track challenge response transaction status
+	go func() {
+		ctx, cancel := createOnChainContext()
+		defer cancel()
+
+		r, err := bind.WaitMined(ctx, operator.ethClient.ContractBackend, tx)
+		if err != nil {
+			log.Errorf("Operator.handleChallengedEvent: Failed to wait for mining of response to challenge %v: %v", c, err)
+			return
+		}
+
+		if r.Status != types.ReceiptStatusSuccessful {
+			log.Errorf("Operator.handleChallengedEvent: Failed to complete response transaction for challenge %v", c)
+			return
+		}
+
+		log.Infof("Operator.handleChallengedEvent: Resolved dispute for challenge %v", c)
+	}()
+
 	return nil
 }
 
@@ -207,8 +281,19 @@ func AssertNoError(err error) {
 	}
 }
 
-// NewDefaultContext creates a default context for the operator.
-func NewDefaultContext() (context.Context, context.CancelFunc) {
-	const defaultContextTimeout = 10 * time.Second
-	return context.WithTimeout(context.Background(), defaultContextTimeout)
+func createDefaultContext() (context.Context, context.CancelFunc) {
+	//todo: make on-chain context configurable
+	return context.WithTimeout(context.Background(), 10*time.Second)
+}
+
+func createOnChainContext() (context.Context, context.CancelFunc) {
+	//todo: make on-chain context configurable
+	return context.WithTimeout(context.Background(), 60*time.Second)
+}
+
+// challengedEvent provides formatting for bindings.ErdstallChallenged.
+type challengedEvent bindings.ErdstallChallenged
+
+func (c challengedEvent) String() string {
+	return fmt.Sprintf("ChallengedEvent{Account: %v, Epoch: %v}", c.Account.String(), c.Epoch)
 }
