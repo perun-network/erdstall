@@ -33,6 +33,6 @@ func (txc *txCache) cacheTx(tx *tee.Transaction) {
 	}
 	sTxs := txc.senders[sender]
 	rTxs := txc.recipients[recipient]
-	sTxs = append(sTxs, tx)
-	rTxs = append(rTxs, tx)
+	txc.senders[sender] = append(sTxs, tx)
+	txc.recipients[recipient] = append(rTxs, tx)
 }
