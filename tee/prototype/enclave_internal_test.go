@@ -5,6 +5,8 @@ package prototype
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
@@ -16,6 +18,8 @@ import (
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 )
+
+type clientAction = func(ctx context.Context, bal *tee.BalanceProof) error
 
 func TestEnclave(t *testing.T) {
 	assert, requiree := assert.New(t), require.New(t)
@@ -39,6 +43,13 @@ func TestEnclave(t *testing.T) {
 	setup := eth.NewSimSetup(rng, 3) // 1 Operator + 2 Clients
 	operatorAd, aliceAd, bobAd := setup.Accounts[0], setup.Accounts[1], setup.Accounts[2]
 	operator := eth.NewClient(*setup.CB, operatorAd)
+
+	seal := func(phase string, n uint64) {
+		t.Logf("Adding %d new blocks to seal %s.", n, phase)
+		for i := uint64(0); i < n; i++ {
+			setup.SimBackend.Commit()
+		}
+	}
 
 	sub, err := operator.SubscribeToBlocks()
 	requiree.NoError(err)
@@ -74,6 +85,12 @@ func TestEnclave(t *testing.T) {
 	// Do deposits
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
+
+	aliceInitBal, err := setup.SimBackend.BalanceAt(ctx, aliceAd.Address, nil)
+	requiree.NoError(err)
+	bobInitBal, err := setup.SimBackend.BalanceAt(ctx, bobAd.Address, nil)
+	requiree.NoError(err)
+
 	requiree.NoError(alice.Deposit(ctx, eth.EthToWeiInt(100)))
 	requiree.NoError(bob.Deposit(ctx, eth.EthToWeiInt(100)))
 	alice.UpdateLastBlockNum()
@@ -94,22 +111,15 @@ func TestEnclave(t *testing.T) {
 
 	// now: deposit epoch: 1, tx epoch: 0
 
-	t.Log("Sending two TXs.")
+	t.Log("Sending three TXs.")
 
 	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(5)))
 	requiree.NoError(bob.Send(aliceAd.Address, eth.EthToWeiInt(10)))
 	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(2)))
 
-	// Signalling the enclave to stop now, so that it doesn't start new epochs on
-	// the next block.
-	t.Log("Set Enclave to shutdown after next phase.")
-	enc.Shutdown()
+	seal("txPhase", params.PhaseDuration)
 
-	t.Log("Adding 3 new blocks to seal next phase.")
-
-	for i := uint64(0); i < params.PhaseDuration; i++ {
-		setup.SimBackend.Commit()
-	}
+	// now: deposit epoch: 2, tx epoch: 1, exit epoch: 0
 
 	t.Log("Getting deposit proofs.")
 	dps, err = enc.DepositProofs()
@@ -126,6 +136,72 @@ func TestEnclave(t *testing.T) {
 		requiree.NoError(err)
 	}
 
+	doWith := func(bp *tee.BalanceProof, aliceDo, bobDo clientAction) {
+		switch bp.Balance.Account {
+		case aliceAd.Address:
+			requiree.NoError(aliceDo(ctx, bp))
+		case bobAd.Address:
+			requiree.NoError(bobDo(ctx, bp))
+		default:
+		}
+	}
+
+	t.Log("Sending two exit TXs.")
+	for _, bp := range bps {
+		doWith(bp, alice.Exit, bob.Exit)
+	}
+
+	// Signalling the enclave to stop now, so that it doesn't start new epochs on
+	// the next block.
+	t.Log("Set Enclave to shutdown after next phase.")
+	enc.Shutdown()
+
+	seal("exitPhase", 1)
+
+	t.Log("Sending two withdrawal TXs.")
+	for _, bp := range bps {
+		doWith(bp, alice.Withdraw, bob.Withdraw)
+	}
+
+	aliceNewBal, err := setup.SimBackend.BalanceAt(ctx, aliceAd.Address, nil)
+	requiree.NoError(err)
+	bobNewBal, err := setup.SimBackend.BalanceAt(ctx, bobAd.Address, nil)
+	requiree.NoError(err)
+	requiree.NoError(checkBals(
+		aliceInitBal,
+		aliceNewBal,
+		bobInitBal,
+		bobNewBal,
+		eth.EthToWeiInt(3),
+	))
+
 	sub.Unsubscribe()
 	ct.Wait("operator")
+}
+
+// checkBals checks whether the new balance of Alice has increased by `difference`
+// and conversely whether the new balance of Bob has decreased. All parameters are
+// assumed to be denominated in `Wei`.
+func checkBals(aliceInit, aliceNew, bobInit, bobNew, difference *big.Int) error {
+	aliceGain := new(big.Int).Sub(aliceNew, aliceInit)
+	bobGain := new(big.Int).Sub(bobNew, bobInit)
+	delta := big.NewInt(1000000)
+	if err := checkInRange(difference, aliceGain, delta); err != nil {
+		return fmt.Errorf("checking alice bals: %w", err)
+	}
+	if err := checkInRange(new(big.Int).Neg(difference), bobGain, delta); err != nil {
+		return fmt.Errorf("checking bob bals: %w", err)
+	}
+	return nil
+}
+
+// checkInRange checks, that given `value` is in range of `median` +- `delta`.
+func checkInRange(median, value, delta *big.Int) error {
+	const LT, GT = -1, 1
+	lowerBound := new(big.Int).Sub(median, delta)
+	upperBound := new(big.Int).Add(median, delta)
+	if lowerBound.Cmp(value) != LT || upperBound.Cmp(value) != GT {
+		return fmt.Errorf("value: %v not in range of median: %v", value, median)
+	}
+	return nil
 }
