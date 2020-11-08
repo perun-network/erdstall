@@ -2,18 +2,20 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
 	"net/http"
 	"net/rpc"
-	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
-	"perun.network/go-perun/pkg/errors"
+	perrors "perun.network/go-perun/pkg/errors"
 
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
@@ -29,6 +31,11 @@ type Operator struct {
 	*depositProofs
 	*balanceProofs
 	contract *bindings.Erdstall
+}
+
+// EnclaveParams returns the enclave parameters.
+func (operator *Operator) EnclaveParams() tee.Parameters {
+	return operator.params
 }
 
 // New instantiates an operator with the given parameters.
@@ -93,14 +100,10 @@ func Setup(cfg *Config) *Operator {
 	return operator
 }
 
-func (operator *Operator) Params() tee.Parameters {
-	return operator.params
-}
-
 // Serve starts the operator's main routine.
 func (operator *Operator) Serve(port int) error {
-	errg := errors.NewGatherer()
-
+	// Handle errors, print them as they occurr
+	errg := perrors.NewGatherer()
 	errGo := func(name string, fn func() error) {
 		errg.Go(func() error {
 			err := fn()
@@ -115,66 +118,151 @@ func (operator *Operator) Serve(port int) error {
 	errGo("Enclave.Run", func() error { return operator.enclave.Run(operator.params) })
 	log.Info("Operator.Serve: Enclave running")
 
+	// Handle Ethereum blocks
+	errGo("Op.BlockSub", operator.handleBlocks)
+	log.Info("Operator.Serve: Block subcription started")
+
+	// Handle on-chain challenges
+	errGo("Op.Challenges", operator.handleChallenges)
+	log.Info("Operator.Serve: Challenge handling started")
+
+	// Handle deposit proofs
+	errGo("Op.DepositProofs", operator.handleDepositProofs)
+	log.Info("Operator.Serve: Deposit proof handling started")
+
+	// Handle balance proofs
+	errGo("Op.BalanceProofs", operator.handleBalanceProofs)
+	log.Info("Operator.Serve: Balance proof handling started")
+
+	// Handle RPC
+	errGo("Op.RPCServe", func() error { return operator.handleRPC(port) })
+	log.Info("Operator.Serve: RPC handling started")
+
+	return errg.Wait()
+}
+
+func (operator *Operator) handleBlocks() error {
 	bigBang, err := operator.contract.BigBang(nil)
 	if err != nil {
 		return fmt.Errorf("reading BigBang: %w", err)
 	}
-
-	// Ethereum block handling
 	blockSub, err := operator.ethClient.SubscribeToBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
 	if err != nil {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}
-	errGo("Op.BlockSub", func() error {
-		defer blockSub.Unsubscribe()
-		for b := range blockSub.Blocks() {
-			log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
-			if err := operator.enclave.ProcessBlocks(b); err != nil {
-				//TODO check for ErrEnclaveStopped error, see enclave internal tests
-				return err
-			}
-			log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
+	defer blockSub.Unsubscribe()
+	for b := range blockSub.Blocks() {
+		log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
+		if err := operator.enclave.ProcessBlocks(b); err != nil {
+			//TODO check for ErrEnclaveStopped error, see enclave internal tests
+			return err
 		}
-		return nil
-	})
-	log.Info("Operator.Serve: Block subcription started")
+		log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
+	}
+	return nil
+}
 
-	// Handle deposit proofs
-	errGo("Op.DepositProofs", func() error {
-		for {
-			dps, err := operator.enclave.DepositProofs()
-			if err != nil {
-				return fmt.Errorf("retrieving deposit proofs: %w", err)
-			}
-			if len(dps) > 0 {
-				log.Debugf("Operator.Serve: Retrieved %d deposit proofs", len(dps))
-			}
-			operator.depositProofs.AddAll(dps)
-		}
-	})
-	log.Info("Operator.Serve: Deposit proof handling started")
-
-	// Handle balance proofs
-	errGo("Op.BalanceProofs", func() error {
-		for {
-			bps, err := operator.enclave.BalanceProofs()
-			if err != nil {
-				return fmt.Errorf("retrieving balance proofs: %w", err)
-			}
-			if len(bps) > 0 {
-				log.Debugf("Operator.Serve: Retrieved %d balance proofs", len(bps))
-			}
-			operator.balanceProofs.AddAll(bps)
-		}
-	})
-	log.Info("Operator.Serve: Balance proof handling started")
-
-	//TODO: operator handles on-chain challenge events
-
-	// RPC handling
-	remoteEnclave := newRemoteEnclave(operator)
-	err = rpc.Register(remoteEnclave)
+func (operator *Operator) handleChallenges() error {
+	challenges := make(chan *bindings.ErdstallChallenged)
+	sub, err := operator.contract.WatchChallenged(nil, challenges, nil, nil)
 	if err != nil {
+		return fmt.Errorf("creating challenge subcription: %w", err)
+	}
+	defer sub.Unsubscribe()
+
+	for {
+		select {
+		case err := <-sub.Err():
+			return fmt.Errorf("subscription error: %w", err)
+
+		case _c := <-challenges:
+			c := challengedEvent(*_c)
+			log.Warnf("Operator.handleChallenges: Incoming challenge %v", c)
+
+			if err := operator.handleChallengedEvent(c); err != nil {
+				log.Errorf("Operator.handleChallenges: Failed to handle challenged event %v: %v", c, err)
+			}
+		}
+	}
+}
+
+func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
+	ctx, cancel := createDefaultContext()
+	defer cancel()
+
+	tr, err := operator.ethClient.NewTransactor(ctx, big.NewInt(0), eth.DefaultGasLimit, operator.ethClient.Account())
+	if err != nil {
+		return fmt.Errorf("creating transactor: %w", err)
+	}
+	tr.Context = ctx
+
+	balanceProof, ok := operator.balanceProofs.Get(c.Account)
+	if !ok {
+		return errors.New("getting balance proof")
+	}
+
+	balance := bindings.ErdstallBalance{
+		Epoch:   balanceProof.Balance.Epoch,
+		Account: balanceProof.Balance.Account,
+		Value:   balanceProof.Balance.Value,
+	}
+
+	tx, err := operator.contract.Exit(tr, balance, balanceProof.Sig)
+	if err != nil {
+		return fmt.Errorf("sending challenge response: %w", err)
+	}
+
+	// Track challenge response transaction status
+	go func() {
+		ctx, cancel := createOnChainContext()
+		defer cancel()
+
+		r, err := bind.WaitMined(ctx, operator.ethClient.ContractBackend, tx)
+		if err != nil {
+			log.Errorf("Operator.handleChallengedEvent: Failed to wait for mining of response to challenge %v: %v", c, err)
+			return
+		}
+
+		if r.Status != types.ReceiptStatusSuccessful {
+			log.Errorf("Operator.handleChallengedEvent: Failed to complete response transaction for challenge %v", c)
+			return
+		}
+
+		log.Infof("Operator.handleChallengedEvent: Resolved dispute for challenge %v", c)
+	}()
+
+	return nil
+}
+
+func (operator *Operator) handleDepositProofs() error {
+	for {
+		dps, err := operator.enclave.DepositProofs()
+		if err != nil {
+			return fmt.Errorf("retrieving deposit proofs: %w", err)
+		}
+		if len(dps) > 0 {
+			log.Debugf("Operator.Serve: Retrieved %d deposit proofs", len(dps))
+		}
+		operator.depositProofs.AddAll(dps)
+	}
+}
+
+func (operator *Operator) handleBalanceProofs() error {
+	for {
+		bps, err := operator.enclave.BalanceProofs()
+		if err != nil {
+			return fmt.Errorf("retrieving balance proofs: %w", err)
+		}
+		if len(bps) > 0 {
+			log.Debugf("Operator.Serve: Retrieved %d balance proofs", len(bps))
+		}
+		operator.balanceProofs.AddAll(bps)
+	}
+}
+
+func (operator *Operator) handleRPC(port int) error {
+	remoteEnclave := newRemoteEnclave(operator)
+	if err := rpc.Register(remoteEnclave); err != nil {
 		return fmt.Errorf("registering remote enclave interface: %w", err)
 	}
 	rpc.HandleHTTP()
@@ -183,73 +271,8 @@ func (operator *Operator) Serve(port int) error {
 	if err != nil {
 		return fmt.Errorf("binding to socket: %w", err)
 	}
-
-	errGo("Op.RPCServe", func() error { return http.Serve(l, nil) })
-	log.Info("Operator.Serve: RPC handling started")
-
-	return errg.Wait()
+	return http.Serve(l, nil)
 }
-
-type depositProofs struct {
-	mu      sync.RWMutex
-	entries map[common.Address]*tee.DepositProof
-}
-
-func newDepositProofs() *depositProofs {
-	return &depositProofs{entries: make(map[common.Address]*tee.DepositProof)}
-}
-
-// Get gets the deposit proof for the given user, threadsafe.
-func (dps *depositProofs) Get(user common.Address) (*tee.DepositProof, bool) {
-	dps.mu.RLock()
-	defer dps.mu.RUnlock()
-
-	dp, ok := dps.entries[user]
-
-	return dp, ok
-}
-
-// AddAll adds the given deposit proofs, threadsafe.
-func (dps *depositProofs) AddAll(in []*tee.DepositProof) {
-	dps.mu.Lock()
-	defer dps.mu.Unlock()
-
-	for _, dp := range in {
-		dps.entries[dp.Balance.Account] = dp
-	}
-}
-
-type balanceProofs struct {
-	mu      sync.RWMutex
-	entries map[common.Address]*tee.BalanceProof
-}
-
-func newBalanceProofs() *balanceProofs {
-	return &balanceProofs{entries: make(map[common.Address]*tee.BalanceProof)}
-}
-
-// Get gets the balance proof for the given user, threadsafe.
-func (bps *balanceProofs) Get(user common.Address) (*tee.BalanceProof, bool) {
-	bps.mu.RLock()
-	defer bps.mu.RUnlock()
-
-	bp, ok := bps.entries[user]
-
-	return bp, ok
-}
-
-// AddAll adds the given balance proofs, threadsafe.
-func (bps *balanceProofs) AddAll(in []*tee.BalanceProof) {
-	bps.mu.Lock()
-	defer bps.mu.Unlock()
-
-	for _, bp := range in {
-		bps.entries[bp.Balance.Account] = bp
-	}
-}
-
-const gasLimit = 2000000
-const defaultContextTimeout = 10 * time.Second
 
 // AssertNoError logs the error and exits if the error is not nil.
 func AssertNoError(err error) {
@@ -258,7 +281,19 @@ func AssertNoError(err error) {
 	}
 }
 
-// NewDefaultContext creates a default context for the operator.
-func NewDefaultContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), defaultContextTimeout)
+func createDefaultContext() (context.Context, context.CancelFunc) {
+	//todo: make on-chain context configurable
+	return context.WithTimeout(context.Background(), 10*time.Second)
+}
+
+func createOnChainContext() (context.Context, context.CancelFunc) {
+	//todo: make on-chain context configurable
+	return context.WithTimeout(context.Background(), 60*time.Second)
+}
+
+// challengedEvent provides formatting for bindings.ErdstallChallenged.
+type challengedEvent bindings.ErdstallChallenged
+
+func (c challengedEvent) String() string {
+	return fmt.Sprintf("ChallengedEvent{Account: %v, Epoch: %v}", c.Account.String(), c.Epoch)
 }

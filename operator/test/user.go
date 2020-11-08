@@ -11,6 +11,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
@@ -94,9 +96,13 @@ func (u *User) Deposit() {
 		u.Fatal("depositing:", err)
 	}
 
-	_, err = bind.WaitMined(ctx, u.ethClient, tx)
+	r, err := bind.WaitMined(ctx, u.ethClient, tx)
 	if err != nil {
 		u.Fatal("waiting for transaction confirmation:", err)
+	}
+
+	if r.Status != types.ReceiptStatusSuccessful {
+		u.Fatal("deposit transaction failed:", err)
 	}
 }
 
@@ -174,4 +180,40 @@ func (u *User) TransactionEpoch() (uint64, error) {
 
 	return u.enclaveParameters.TxEpoch(blockHeader.NumberU64()), nil
 
+}
+
+// SubscribeToExitEvents subscribes the user the exit events.
+func (u *User) SubscribeToExitEvents() (event.Subscription, chan *bindings.ErdstallExiting) {
+	exitEvents := make(chan *bindings.ErdstallExiting)
+	sub, err := u.contract.WatchExiting(nil, exitEvents, nil, nil)
+	if err != nil {
+		u.Fatal("subscribing to exit events:", err)
+	}
+
+	return sub, exitEvents
+}
+
+// Challenge challenges the operator for the balance proof of the current epoch.
+func (u *User) Challenge() {
+	ctx, cancel := newDefaultContext()
+	defer cancel()
+
+	tr, err := u.ethClient.NewTransactor(ctx, big.NewInt(0), gasLimit, u.ethClient.Account())
+	if err != nil {
+		u.Fatal("creating transactor:", err)
+	}
+
+	tx, err := u.contract.Challenge(tr)
+	if err != nil {
+		u.Fatal("sending challenge transaction:", err)
+	}
+
+	r, err := bind.WaitMined(ctx, u.ethClient, tx)
+	if err != nil {
+		u.Fatal("waiting for transaction confirmation:", err)
+	}
+
+	if r.Status != types.ReceiptStatusSuccessful {
+		u.Fatal("challenge transaction failed:", err)
+	}
 }
