@@ -190,11 +190,10 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 	ctx, cancel := createDefaultContext()
 	defer cancel()
 
-	tr, err := operator.ethClient.NewTransactor(ctx, big.NewInt(0), eth.DefaultGasLimit, operator.ethClient.Account())
+	tr, err := operator.ethClient.NewTransactor(ctx)
 	if err != nil {
 		return fmt.Errorf("creating transactor: %w", err)
 	}
-	tr.Context = ctx
 
 	balanceProof, ok := operator.balanceProofs.Get(c.Account)
 	if !ok {

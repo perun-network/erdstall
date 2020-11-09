@@ -10,13 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 	_ "perun.network/go-perun/backend/ethereum" // init
-	"perun.network/go-perun/backend/ethereum/channel"
 	wtest "perun.network/go-perun/backend/ethereum/wallet/test"
 	pkgtest "perun.network/go-perun/pkg/test"
 
@@ -32,7 +30,7 @@ func TestErdstallBindings(t *testing.T) {
 	defer cancel()
 
 	params := &tee.Parameters{TEE: s.Accounts[0].Address, PhaseDuration: 3, ResponseDuration: 1}
-	erdstall, err := deployErdstall(ctx, params, s.CB, s.Accounts[0])
+	erdstall, err := deployErdstall(ctx, params, eth.NewClient(*s.CB, s.Accounts[0]))
 	require.NoError(t, err)
 	require.NotNil(t, erdstall)
 	opts := &bind.CallOpts{Context: ctx}
@@ -80,13 +78,13 @@ func testSigVerify(t *testing.T, rng *rand.Rand, params *tee.Parameters, contr *
 	}
 }
 
-func deployErdstall(ctx context.Context, params *tee.Parameters, cb *channel.ContractBackend, acc accounts.Account) (*bindings.Erdstall, error) {
-	tr, err := cb.NewTransactor(context.Background(), big.NewInt(0), 6000000, acc)
+func deployErdstall(ctx context.Context, params *tee.Parameters, cl *eth.Client) (*bindings.Erdstall, error) {
+	tr, err := cl.NewTransactor(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("creating transactor: %w", err)
 	}
 
-	address, tx, contract, err := bindings.DeployErdstall(tr, cb.ContractInterface,
+	address, tx, contract, err := bindings.DeployErdstall(tr, cl.ContractInterface,
 		params.TEE,
 		params.PhaseDuration,
 		params.ResponseDuration)
@@ -94,13 +92,13 @@ func deployErdstall(ctx context.Context, params *tee.Parameters, cb *channel.Con
 		return nil, fmt.Errorf("deploying contract: %w", err)
 	}
 
-	_, err = bind.WaitDeployed(ctx, cb, tx)
+	_, err = bind.WaitDeployed(ctx, cl.ContractBackend, tx)
 	if err != nil {
 		return nil, fmt.Errorf("waiting for contract deployment: %w", err)
 	}
 	params.Contract = address
 
-	receipt, err := cb.TransactionReceipt(ctx, tx.Hash())
+	receipt, err := cl.TransactionReceipt(ctx, tx.Hash())
 	if err != nil {
 		return nil, fmt.Errorf("getting tx receipt: %w", err)
 	}

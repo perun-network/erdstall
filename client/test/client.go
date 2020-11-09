@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/perun-network/erdstall/contracts/bindings"
@@ -64,25 +65,32 @@ func (c *Client) UpdateLastBlockNum() {
 }
 
 // Deposit deposits amount to the Erdstall contract and waits until the deposit
-// tx is mined. The minedBlockNum is updated automatically.
+// TX is mined. The minedBlockNum is updated automatically.
 func (c *Client) Deposit(ctx context.Context, amount *big.Int) error {
-	tr, err := c.ethClient.NewTransactor(ctx, amount, eth.DefaultGasLimit, c.ethClient.Account())
-	if err != nil {
-		return fmt.Errorf("creating transactor: %w", err)
-	}
+	return c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
+		tr.Value = amount
+		return c.contract.Deposit(tr)
+	})
+}
 
-	tx, err := c.contract.Deposit(tr)
-	if err != nil {
-		return fmt.Errorf("calling deposit: %w", err)
-	}
+// Exit exits the Erdstall contract and waits until the exit TX is mined. The
+// minedBlockNum is updated automatically.
+func (c *Client) Exit(ctx context.Context, bal *tee.BalanceProof) error {
+	return c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Exit(tr, bindings.ErdstallBalance{
+			Epoch:   bal.Balance.Epoch,
+			Account: bal.Balance.Account,
+			Value:   bal.Balance.Value,
+		}, bal.Sig)
+	})
+}
 
-	rec, err := bind.WaitMined(ctx, c.ethClient, tx)
-	if err != nil {
-		return fmt.Errorf("waiting for deposit block: %w", err)
-	}
-	c.SetMinedBlockNum(uint64(rec.BlockNumber.Int64()))
-
-	return nil
+// Withdraw withdraws the balance with the given `tee.BalanceProof` and waits
+// until the withdraw TX is mined. The minedBlockNum is updated automatically.
+func (c *Client) Withdraw(ctx context.Context, bal *tee.BalanceProof) error {
+	return c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Withdraw(tr, bal.Balance.Epoch)
+	})
 }
 
 func (c *Client) Send(recipient common.Address, amount *big.Int) error {
@@ -111,4 +119,29 @@ func (c *Client) SignTx(tx *tee.Transaction) {
 	if err := tx.Sign(c.params.Contract, c.ethClient.Account(), c.wallet); err != nil {
 		log.Panicf("Error signing tx: %v", err)
 	}
+}
+
+// call calls the given function, waits for the TX to be mined and updates the
+// clients last mined blocknumber.
+func (c *Client) call(ctx context.Context, call func(*bind.TransactOpts) (*types.Transaction, error)) error {
+	tr, err := c.ethClient.NewTransactor(ctx)
+	if err != nil {
+		return err
+	}
+
+	tx, err := call(tr)
+	if err != nil {
+		return fmt.Errorf("calling contract: %w", err)
+	}
+
+	rec, err := bind.WaitMined(ctx, c.ethClient, tx)
+	if err != nil {
+		return fmt.Errorf("waiting for block containing TX: %w", err)
+	}
+	if rec.Status == types.ReceiptStatusFailed {
+		return fmt.Errorf("execution of contract call failed")
+	}
+	c.SetMinedBlockNum(uint64(rec.BlockNumber.Int64()))
+
+	return nil
 }

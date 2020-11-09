@@ -84,7 +84,7 @@ func (u *User) Deposit() {
 	ctx, cancel := newDefaultContext()
 	defer cancel()
 
-	t, err := u.ethClient.NewTransactor(ctx, big.NewInt(0), gasLimit, u.ethClient.Account())
+	t, err := u.ethClient.NewTransactor(ctx)
 	if err != nil {
 		u.Fatal("creating transactor:", err)
 	}
@@ -198,7 +198,7 @@ func (u *User) Challenge() {
 	ctx, cancel := newDefaultContext()
 	defer cancel()
 
-	tr, err := u.ethClient.NewTransactor(ctx, big.NewInt(0), gasLimit, u.ethClient.Account())
+	tr, err := u.ethClient.NewTransactor(ctx)
 	if err != nil {
 		u.Fatal("creating transactor:", err)
 	}

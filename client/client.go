@@ -283,11 +283,12 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 	amount := eth.EthToWeiFloat(_amount)
 
 	status <- &CmdStatus{Msg: "Deposit TX: Preparing"}
-	otps, err := c.ethClient.NewTransactor(txCtx(), amount, eth.DefaultGasLimit, c.ethClient.Account())
+	otps, err := c.ethClient.NewTransactor(txCtx())
 	if err != nil {
 		status <- &CmdStatus{Err: err}
 		return
 	}
+	otps.Value = amount
 	status <- &CmdStatus{Msg: "Deposit TX: Sending"}
 	tx, err := c.contract.Deposit(otps)
 	if err != nil {
@@ -444,7 +445,7 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 	}
 
 	status <- &CmdStatus{Msg: "Exit TX: Preparing"}
-	otps, err := c.ethClient.NewTransactor(txCtx(), big.NewInt(0), eth.DefaultGasLimit, c.ethClient.Account())
+	otps, err := c.ethClient.NewTransactor(txCtx())
 	if err != nil {
 		status <- &CmdStatus{Err: err}
 		return
@@ -479,7 +480,7 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 		return
 	}
 	status <- &CmdStatus{Msg: "Withdraw TX: Preparing"}
-	otps, err = c.ethClient.NewTransactor(txCtx(), big.NewInt(0), eth.DefaultGasLimit, c.ethClient.Account())
+	otps, err = c.ethClient.NewTransactor(txCtx())
 	if err != nil {
 		status <- &CmdStatus{Err: err}
 		return
