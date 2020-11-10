@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	log "github.com/sirupsen/logrus"
+	perrors "perun.network/go-perun/pkg/errors"
 	"perun.network/go-perun/pkg/sync/atomic"
 
 	"github.com/perun-network/erdstall/tee"
@@ -24,8 +25,8 @@ type (
 		epochs epochchain
 
 		// incoming data
-		newBlocks chan *tee.Block
-		newTXs    chan *tee.Transaction
+		newBlocks chan blockReq
+		newTXs    chan txReq
 
 		// outgoing data
 		depositProofs chan []*tee.DepositProof
@@ -36,6 +37,16 @@ type (
 
 		running atomic.Bool   // if false, signals processors to return after sealing epoch
 		done    chan struct{} // signal by processors that they're done
+	}
+
+	blockReq struct {
+		block  *tee.Block
+		result chan<- error
+	}
+
+	txReq struct {
+		tx     *tee.Transaction
+		result chan<- error
 	}
 )
 
@@ -53,8 +64,8 @@ var ErrEnclaveStopped = errors.New("Enclave stopped")
 func NewEnclave(wallet accounts.Wallet) *Enclave {
 	return &Enclave{
 		wallet:            wallet,
-		newBlocks:         make(chan *tee.Block, bufSizeBlocks),
-		newTXs:            make(chan *tee.Transaction, bufSizeTXs),
+		newBlocks:         make(chan blockReq, bufSizeBlocks),
+		newTXs:            make(chan txReq, bufSizeTXs),
 		depositProofs:     make(chan []*tee.DepositProof, bufSizeProofs),
 		balanceProofs:     make(chan []*tee.BalanceProof, bufSizeProofs),
 		depositProofCache: make(map[common.Address]*tee.DepositProof),
@@ -85,7 +96,7 @@ func (e *Enclave) Run(params tee.Parameters) error {
 	}
 
 	var (
-		verifiedBlocks = make(chan *tee.Block, bufSizeBlocks) // connects the block and epoch processors
+		verifiedBlocks = make(chan blockReq, bufSizeBlocks) // connects the block and epoch processors
 		blockErr       = make(chan error)
 		epochErr       = make(chan error)
 		numProcs       = 2
@@ -161,14 +172,20 @@ func (e *Enclave) setParams(p tee.Parameters) error {
 // the Enclave before it reveals an epoch's balance proofs to the operator.
 // k is a security parameter to guarantee enough PoW depth.
 func (e *Enclave) ProcessBlocks(blocks ...*tee.Block) error {
+	err := make(chan error, len(blocks))
 	for _, b := range blocks {
 		select {
-		case e.newBlocks <- b:
+		case e.newBlocks <- blockReq{b, err}:
 		case <-e.done:
 			return ErrEnclaveStopped
 		}
 	}
-	return nil
+
+	errg := perrors.NewGatherer()
+	for range blocks {
+		errg.Add(<-err)
+	}
+	return errg.Err()
 }
 
 // ProcessTXs should be called by the Operator whenever they receive new
@@ -176,14 +193,20 @@ func (e *Enclave) ProcessBlocks(blocks ...*tee.Block) error {
 // additional k blocks made known to the Enclave, the epoch's balance proofs
 // can be received by calling BalanceProofs.
 func (e *Enclave) ProcessTXs(txs ...*tee.Transaction) error {
+	err := make(chan error)
 	for _, tx := range txs {
 		select {
-		case e.newTXs <- tx:
+		case e.newTXs <- txReq{tx, err}:
 		case <-e.done:
 			return ErrEnclaveStopped
 		}
 	}
-	return nil
+
+	errg := perrors.NewGatherer()
+	for range txs {
+		errg.Add(<-err)
+	}
+	return errg.Err()
 }
 
 // DepositProofs returns the deposit proofs of all deposits made in an epoch

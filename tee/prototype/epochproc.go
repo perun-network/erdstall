@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
+	perrors "perun.network/go-perun/pkg/errors"
 
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
@@ -20,8 +21,8 @@ import (
 // TODO: order function after call-stack please.
 
 func (e *Enclave) epochProcessor(
-	verifiedBlocks <-chan *tee.Block,
-	txs <-chan *tee.Transaction,
+	verifiedBlocks <-chan blockReq,
+	txs <-chan txReq,
 ) error {
 	var (
 		depositEpoch = NewEpoch(0)
@@ -74,10 +75,11 @@ func (e *Enclave) epochProcessor(
 	}
 }
 
-// TODO: racing transactions.
+// txRoutine handles incoming transactions. It should only return a non-nil
+// error if it cannot proceed handling any further transactions.
 func (e *Enclave) txRoutine(
 	exits <-chan exitersSet,
-	txs <-chan *tee.Transaction,
+	txs <-chan txReq,
 	txEpoch *Epoch,
 ) error {
 	log := log.WithField("txEpoch", "<not started>")
@@ -85,13 +87,14 @@ func (e *Enclave) txRoutine(
 		log = log.WithField("txEpoch", txEpoch.Number)
 	}
 
-	txCounter := 0
-	stagedTxs := makeTxCache()
+	var (
+		txCounter int
+		stagedTxs = makeTxCache()
+	)
 	for {
 		select {
 		case exiters := <-exits:
 			log.Infof("txRoutine: processed %d TXs", txCounter)
-			log.Trace("txRoutine: exiters received")
 			// TODO: check for inconsistent deposits.
 			if err := noInconsistentExits(&stagedTxs, exiters); err != nil {
 				log.Errorf("txRoutine: checking exiters: %v", err)
@@ -110,7 +113,8 @@ func (e *Enclave) txRoutine(
 			log.Trace("txRoutine: return")
 			return nil
 
-		case tx := <-txs:
+		case txr := <-txs:
+			tx := txr.tx
 			txCounter++
 			log := log.WithFields(logrus.Fields{
 				"sender":    tx.Sender.String(),
@@ -120,9 +124,12 @@ func (e *Enclave) txRoutine(
 			})
 			log.Debug("txRoutine: TX received, applying...")
 			stagedTxs.cacheTx(tx)
-			err := e.applyEpochTx(txEpoch, tx)
-			if err != nil {
+			if err := e.applyEpochTx(txEpoch, tx); err != nil {
 				log.Errorf("txRoutine: Error applying tx: %v", err)
+				txr.result <- fmt.Errorf("applying tx: %w", err)
+			} else {
+				log.Trace("txRoutine: tx successfully applied.")
+				txr.result <- nil
 			}
 		}
 	}
@@ -132,33 +139,43 @@ func (e *Enclave) txRoutine(
 // transaction.
 // TODO: check for inconsistent deposits.
 func noInconsistentExits(txc *txCache, exiters exitersSet) error {
+	errg := perrors.NewGatherer()
 	for _, e := range exiters {
 		sTxs, sOk := txc.senders[e]
 		rTxs, rOk := txc.recipients[e]
 		if sOk {
-			return fmt.Errorf("exited user %v is sender for %v transactions", e.String(), len(sTxs))
+			errg.Add(fmt.Errorf("exited user %v sent %d txs", e, len(sTxs)))
 		}
 		if rOk {
-			return fmt.Errorf("exited user %v is recipient for %v transactions", e.String(), len(rTxs))
+			errg.Add(fmt.Errorf("exited user %v received %d txs", e, len(rTxs)))
 		}
 	}
-	return nil
+	return errg.Err()
 }
 
+// depositExitRoutine processes new blocks by applying deposits and exits to the
+// corresponding epoch. It only returns an error if it cannot proceed processing
+// blocks.
 func (e *Enclave) depositExitRoutine(
-	verifiedBlocks <-chan *tee.Block,
+	verifiedBlocks <-chan blockReq,
 	exits chan<- exitersSet,
 	depositEpoch, exitEpoch *Epoch,
 ) error {
 	var exiters exitersSet
 	// read blocks from verifiedBlocks (deposit phase).
-	for vb := range verifiedBlocks {
+	for vbr := range verifiedBlocks {
+		vb := vbr.block
 		log := log.WithField("blockNum", vb.NumberU64())
+
 		log.Debug("depositExitRoutine: received block")
 		exs, err := e.handleVerifiedBlock(depositEpoch, exitEpoch, vb)
 		if err != nil {
-			return fmt.Errorf("handling verified blocknr %v: %w", vb.NumberU64(), err)
+			err = fmt.Errorf("handling verified block #%d: %w", vb.NumberU64(), err)
+			vbr.result <- err
+			return err // stop routine immediately if block cannot be processed.
 		}
+		vbr.result <- nil
+
 		exiters = append(exiters, exs...)
 		if e.params.IsLastPhaseBlock(vb.NumberU64()) {
 			log.Debug("depositExitRoutine: last block of phase, pushing deposit proofs and return")
