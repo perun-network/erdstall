@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	wtest "perun.network/go-perun/backend/ethereum/wallet/test"
 	"perun.network/go-perun/pkg/test"
 
 	cltest "github.com/perun-network/erdstall/client/test"
@@ -86,14 +88,20 @@ func TestEnclave(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	aliceInitBal, err := setup.SimBackend.BalanceAt(ctx, aliceAd.Address, nil)
+	aliceInitBal, err := setup.SimBackend.BalanceAt(ctx, alice.Address(), nil)
 	requiree.NoError(err)
-	bobInitBal, err := setup.SimBackend.BalanceAt(ctx, bobAd.Address, nil)
+	bobInitBal, err := setup.SimBackend.BalanceAt(ctx, bob.Address(), nil)
 	requiree.NoError(err)
 
-	requiree.NoError(alice.Deposit(ctx, eth.EthToWeiInt(100)))
-	requiree.NoError(bob.Deposit(ctx, eth.EthToWeiInt(100)))
+	initValue := eth.EthToWeiInt(100)
+	requiree.NoError(alice.Deposit(ctx, initValue))
+	requiree.NoError(bob.Deposit(ctx, initValue))
 	alice.UpdateLastBlockNum()
+	// local tracking of balances
+	balances := map[common.Address]interface{ Balance() *big.Int }{
+		alice.Address(): alice,
+		bob.Address():   bob,
+	}
 	t.Log("Deposits made!")
 
 	dps, err := enc.DepositProofs()
@@ -103,6 +111,7 @@ func TestEnclave(t *testing.T) {
 		ok, err := tee.VerifyDepositProof(params, *dp)
 		requiree.True(ok)
 		requiree.NoError(err)
+		requiree.Zero(initValue.Cmp(dp.Balance.Value))
 	}
 
 	bps, err := enc.BalanceProofs()
@@ -113,9 +122,10 @@ func TestEnclave(t *testing.T) {
 
 	t.Log("Sending three TXs.")
 
-	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(5)))
-	requiree.NoError(bob.Send(aliceAd.Address, eth.EthToWeiInt(10)))
-	requiree.NoError(alice.Send(bobAd.Address, eth.EthToWeiInt(2)))
+	requiree.NoError(alice.SendToClient(bob, eth.EthToWeiInt(5)))
+	requiree.NoError(bob.SendToClient(alice, eth.EthToWeiInt(10)))
+	requiree.NoError(alice.SendToClient(bob, eth.EthToWeiInt(2)))
+
 
 	seal("txPhase", params.PhaseDuration)
 
@@ -129,18 +139,13 @@ func TestEnclave(t *testing.T) {
 	t.Log("Getting balance proofs.")
 	bps, err = enc.BalanceProofs()
 	requiree.NoError(err)
-	assert.Len(bps, 2)
-	for _, bp := range bps {
-		ok, err := tee.VerifyBalanceProof(params, *bp)
-		requiree.True(ok)
-		requiree.NoError(err)
-	}
+	verifyBalanceProofs(t, params, balances, bps)
 
 	doWith := func(bp *tee.BalanceProof, aliceDo, bobDo clientAction) {
 		switch bp.Balance.Account {
-		case aliceAd.Address:
+		case alice.Address():
 			requiree.NoError(aliceDo(ctx, bp))
-		case bobAd.Address:
+		case bob.Address():
 			requiree.NoError(bobDo(ctx, bp))
 		default:
 		}
@@ -163,9 +168,9 @@ func TestEnclave(t *testing.T) {
 		doWith(bp, alice.Withdraw, bob.Withdraw)
 	}
 
-	aliceNewBal, err := setup.SimBackend.BalanceAt(ctx, aliceAd.Address, nil)
+	aliceNewBal, err := setup.SimBackend.BalanceAt(ctx, alice.Address(), nil)
 	requiree.NoError(err)
-	bobNewBal, err := setup.SimBackend.BalanceAt(ctx, bobAd.Address, nil)
+	bobNewBal, err := setup.SimBackend.BalanceAt(ctx, bob.Address(), nil)
 	requiree.NoError(err)
 	requiree.NoError(checkBals(
 		aliceInitBal,
@@ -204,4 +209,21 @@ func checkInRange(median, value, delta *big.Int) error {
 		return fmt.Errorf("value: %v not in range of median: %v", value, median)
 	}
 	return nil
+}
+
+func verifyBalanceProofs(t require.TestingT,
+	params tee.Parameters,
+	expBalances map[common.Address]interface{ Balance() *big.Int },
+	bps []*tee.BalanceProof) {
+	require := require.New(t)
+	require.Len(bps, len(expBalances))
+	for _, bp := range bps {
+		ok, err := tee.VerifyBalanceProof(params, *bp)
+		require.True(ok)
+		require.NoError(err)
+		require.Contains(expBalances, bp.Balance.Account)
+		got, exp := bp.Balance.Value, expBalances[bp.Balance.Account].Balance()
+		require.Zerof(got.Cmp(exp),
+			"balance mismatch for %s, got: %v, expected: %v [ETH]", bp.Balance.Account.String(), eth.WeiToEthFloat(got), eth.WeiToEthFloat(exp))
+	}
 }

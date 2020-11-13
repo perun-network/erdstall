@@ -26,6 +26,7 @@ type Client struct {
 
 	Nonce         uint64
 	minedBlockNum uint64
+	balance       *big.Int // local balance tracking
 }
 
 // NewClient creates a testing Erdstall client.
@@ -42,12 +43,21 @@ func NewClient(params tee.Parameters, wallet tee.TextSigner, ethClient *eth.Clie
 		contract:  contract,
 		wallet:    wallet,
 		tr:        tr,
+		balance:   new(big.Int),
 	}, nil
 }
 
-func (c *Client) NextNonce() uint64 {
+func (c *Client) nextNonce() uint64 {
 	c.Nonce++
 	return c.Nonce
+}
+
+func (c *Client) Balance() *big.Int {
+	return new(big.Int).Set(c.balance)
+}
+
+func (c *Client) Address() common.Address {
+	return c.ethClient.Account().Address
 }
 
 func (c *Client) SetMinedBlockNum(n uint64) {
@@ -67,22 +77,30 @@ func (c *Client) UpdateLastBlockNum() {
 // Deposit deposits amount to the Erdstall contract and waits until the deposit
 // TX is mined. The minedBlockNum is updated automatically.
 func (c *Client) Deposit(ctx context.Context, amount *big.Int) error {
-	return c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
+	err := c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
 		tr.Value = amount
 		return c.contract.Deposit(tr)
 	})
+	if err == nil {
+		c.balance.Add(c.balance, amount)
+	}
+	return err
 }
 
 // Exit exits the Erdstall contract and waits until the exit TX is mined. The
 // minedBlockNum is updated automatically.
 func (c *Client) Exit(ctx context.Context, bal *tee.BalanceProof) error {
-	return c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
+	err := c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
 		return c.contract.Exit(tr, bindings.ErdstallBalance{
 			Epoch:   bal.Balance.Epoch,
 			Account: bal.Balance.Account,
 			Value:   bal.Balance.Value,
 		}, bal.Sig)
 	})
+	if err == nil {
+		c.balance.SetUint64(0)
+	}
+	return err
 }
 
 // Withdraw withdraws the balance with the given `tee.BalanceProof` and waits
@@ -93,11 +111,13 @@ func (c *Client) Withdraw(ctx context.Context, bal *tee.BalanceProof) error {
 	})
 }
 
+// Send sends amount to the given recipient.
+// If you need proper balance tracking for testing, use SendToClient instead.
 func (c *Client) Send(recipient common.Address, amount *big.Int) error {
 	tx := &tee.Transaction{
-		Nonce:     c.NextNonce(),
+		Nonce:     c.nextNonce(),
 		Epoch:     c.params.TxEpoch(c.minedBlockNum + 1),
-		Sender:    c.ethClient.Account().Address,
+		Sender:    c.Address(),
 		Recipient: recipient,
 		Amount:    amount,
 	}
@@ -112,7 +132,21 @@ func (c *Client) Send(recipient common.Address, amount *big.Int) error {
 	})
 	log.Debug("Sending TX")
 	defer log.Trace("TX sent")
-	return c.tr.Send(tx)
+	err := c.tr.Send(tx)
+	if err == nil {
+		c.balance.Sub(c.balance, amount)
+	}
+	return err
+}
+
+// SendToClient sends amount to the given recipient.
+// Use this if you need proper balance tracking in your tests.
+func (c *Client) SendToClient(recipient *Client, amount *big.Int) error {
+	err := c.Send(recipient.Address(), amount)
+	if err == nil {
+		recipient.balance.Add(recipient.balance, amount)
+	}
+	return err
 }
 
 func (c *Client) SignTx(tx *tee.Transaction) {
