@@ -16,6 +16,7 @@ type Config struct {
 	ResponseDuration       uint64
 	PowDepth               uint64
 	Port                   int
+	RespondChallenges      bool
 }
 
 // LoadConfig loads an operator configuration from the given file path.
