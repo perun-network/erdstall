@@ -192,5 +192,6 @@ func newDefaultConfig() *Config {
 		1,
 		0,
 		8080,
+		true,
 	}
 }
