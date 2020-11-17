@@ -58,7 +58,9 @@ func CreateUser(
 	contractAddress common.Address,
 	enclaveParameters tee.Parameters,
 ) *User {
-	ethClient, err := eth.CreateEthereumClient(ethURL, wallet, account)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ethClient, err := eth.CreateEthereumClient(ctx, ethURL, wallet, account)
 	if err != nil {
 		t.Fatal("creating ethereum wallet and client:", err)
 	}
