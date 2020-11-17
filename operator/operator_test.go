@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"perun.network/go-perun/pkg/errors"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 
 	"github.com/perun-network/erdstall/operator/test"
@@ -164,11 +166,26 @@ func initEnvironment(t *testing.T) *environment {
 }
 
 func (e *environment) WaitPhase() {
-	waitBlock := func() {
-		time.Sleep(blockTime * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(blockTime*e.cfg.PhaseDuration+1)*time.Second)
+	defer cancel()
+	heads := make(chan *types.Header)
+	sub, err := e.operator.ethClient.SubscribeNewHead(ctx, heads)
+	if err != nil {
+		e.T.Fatal("subscribing to header: ", err)
 	}
-	for i := uint64(0); i < e.enclaveParameters.PhaseDuration; i++ {
-		waitBlock()
+	defer sub.Unsubscribe()
+
+	for {
+		select {
+		case head := <-heads:
+			if e.enclaveParameters.IsLastPhaseBlock(head.Number.Uint64() - 1) {
+				return
+			}
+		case <-ctx.Done():
+			e.T.Fatal("context: ", ctx.Err())
+		case err := <-sub.Err():
+			e.T.Fatal("header subscription: ", err)
+		}
 	}
 }
 
