@@ -5,7 +5,7 @@
 set -e
 
 # Download solc.
-wget -nc "https://github.com/ethereum/solidity/releases/download/v0.7.3/solc-static-linux"
+wget -nc "https://github.com/ethereum/solidity/releases/download/v0.7.4/solc-static-linux"
 chmod +x solc-static-linux
 echo -e "Ensure that the newest version of abigen is installed"
 

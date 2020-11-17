@@ -64,7 +64,7 @@ func parseExitEvent(l *types.Log) (*erdstallExitEvent, error) {
 // UnpackLog unpacks a retrieved log into the provided output structure.
 func unpackLog(out interface{}, event string, log types.Log) error {
 	if len(log.Data) > 0 {
-		if err := contractAbi.Unpack(out, event, log.Data); err != nil {
+		if err := contractAbi.UnpackIntoInterface(out, event, log.Data); err != nil {
 			return err
 		}
 	}
