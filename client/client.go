@@ -14,14 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 
-	pethchannel "perun.network/go-perun/backend/ethereum/channel"
 	pethwallet "perun.network/go-perun/backend/ethereum/wallet"
 	psync "perun.network/go-perun/pkg/sync"
 	pwallet "perun.network/go-perun/wallet"
@@ -35,14 +31,13 @@ import (
 type Client struct {
 	psync.Closer
 	// Initialized in NewClient
-	Config          config.ClientConfig
-	conn            *RPC
-	ethClient       *eth.Client
-	contractAddr    common.Address
-	signer          tee.TextSigner
-	txNonce         uint64
-	balances        map[uint64]EpochBalance // epoch => balance
-	balProofWatcher sync.Once
+	Config       config.ClientConfig
+	conn         *RPC
+	ethClient    *eth.Client
+	contractAddr common.Address
+	signer       tee.TextSigner
+	txNonce      uint64
+	balances     map[uint64]EpochBalance // epoch => balance
 	// Initialized in Run()
 	currentBlock uint64 // Atomic
 	contract     *bindings.Erdstall
@@ -112,8 +107,6 @@ const (
 const (
 	// How long do we wait for the deposit proof after the deposit phase is over.
 	depositProofGrace = time.Second * 30
-	balanceProofGrace = time.Second * 30
-	blockTime         = time.Second * 2
 )
 
 // Trust describes how we perceive the operator.
@@ -266,7 +259,9 @@ func (c *Client) CmdBench(status chan *CmdStatus, args ...string) {
 		return c.conn.AddTX(shortCtx(), tx)
 	})
 	c.events <- &Event{Type: BENCH, Result: result}
-	return
+	if err != nil {
+		status <- &CmdStatus{Err: err}
+	}
 }
 
 func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
@@ -369,24 +364,6 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 	}
 	// TODO challenge
 	status <- &CmdStatus{Err: errors.New("TODO challenge")}
-	return
-}
-
-func errorReason(ctx context.Context, b *pethchannel.ContractBackend, tx *types.Transaction, blockNum *big.Int, acc accounts.Account) (string, error) {
-	msg := ethereum.CallMsg{
-		From:     acc.Address,
-		To:       tx.To(),
-		Gas:      tx.Gas(),
-		GasPrice: tx.GasPrice(),
-		Value:    tx.Value(),
-		Data:     tx.Data(),
-	}
-	res, err := b.CallContract(ctx, msg, blockNum)
-	if err != nil {
-		return "", fmt.Errorf("CallContract: %v", err)
-	}
-	reason, err := abi.UnpackRevert(res)
-	return reason, fmt.Errorf("unpacking revert reason: %v", err)
 }
 
 // BalanceProofWatcher waits for the balance proof of an epoch and disputes
@@ -544,28 +521,8 @@ func (c *Client) logOffChain(format string, args ...interface{}) {
 	c.events <- &Event{Type: CHAIN_MSG, Message: "🍵 " + fmt.Sprintf(format, args...)}
 }
 
-// must hold balMtx while calling
-func (c *Client) report() BalanceReport {
-	sum := new(big.Int)
-	for _, b := range c.balances {
-		sum.Add(sum, b.Value)
-	}
-	return BalanceReport{Balance: sum}
-}
-
 func (c *Client) Address() common.Address {
 	return c.ethClient.Account().Address
-}
-
-func blockNum(cb pethchannel.ContractInterface) (uint64, error) {
-	h, err := cb.HeaderByNumber(context.TODO(), nil)
-	if err != nil {
-		return 0, err
-	}
-	if !h.Number.IsUint64() {
-		panic("Block number too big")
-	}
-	return h.Number.Uint64(), nil
 }
 
 func strToPerunAddress(str string) (pwallet.Address, error) {

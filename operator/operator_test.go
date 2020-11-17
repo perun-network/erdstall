@@ -18,7 +18,7 @@ import (
 
 func TestOperator(t *testing.T) {
 	environment := initEnvironment(t)
-	defer environment.Shutdown()
+	t.Cleanup(environment.Shutdown)
 
 	errg := environment.errg
 	user1 := environment.user1
@@ -178,7 +178,9 @@ func (e *environment) WaitPhase() {
 
 func (e *environment) Shutdown() {
 	if e.cmd != nil {
-		e.cmd.Process.Kill()
+		if err := e.cmd.Process.Kill(); err != nil {
+			log.Warn("Could not kill process:", err)
+		}
 	}
 }
 

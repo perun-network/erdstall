@@ -80,8 +80,10 @@ func TestEnclave(t *testing.T) {
 	encTr := &cltest.EnclaveTransactor{Enclave: enc} // transact directly on the enclave, bypassing the operator
 	aliceEthCl := eth.NewClient(*setup.CB, aliceAd)
 	alice, err := cltest.NewClient(params, setup.HdWallet, aliceEthCl, encTr)
+	require.NoError(t, err)
 	bobEthCl := eth.NewClient(*setup.CB, bobAd)
 	bob, err := cltest.NewClient(params, setup.HdWallet, bobEthCl, encTr)
+	require.NoError(t, err)
 
 	// Do deposits
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
