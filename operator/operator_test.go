@@ -119,21 +119,17 @@ func initEnvironment(t *testing.T) *environment {
 
 	cfg := newDefaultConfig()
 
-	var cmd *exec.Cmd
-	runGanache := true
-	if runGanache {
-		cmd = exec.Command(
-			"ganache-cli",
-			"--accounts=10",
-			"--defaultBalanceEther=100",
-			fmt.Sprintf("--mnemonic=\"%s\"", cfg.Mnemonic),
-			fmt.Sprintf("--blockTime=%d", blockTime),
-		)
-		err := cmd.Start()
-		if err != nil {
-			log.Fatal(err)
-		}
-		time.Sleep(3 * time.Second)
+	prog, args := ganacheCommand()
+	args = append(args,
+		"--accounts=10",
+		"--defaultBalanceEther=100",
+		fmt.Sprintf("--mnemonic=\"%s\"", cfg.Mnemonic),
+		fmt.Sprintf("--blockTime=%d", blockTime),
+	)
+	cmd := exec.Command(prog, args...)
+	err := cmd.Start()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	operator := Setup(cfg)

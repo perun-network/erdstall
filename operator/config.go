@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -37,4 +39,25 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+// envGanacheCmd is the environment variable to set the command
+// for spawning a `ganache-cli`. It is set "ERDSTALL_GANACHE_CMD".
+// See `ganacheCommand()`.
+const envGanacheCmd = "ERDSTALL_GANACHE_CMD"
+
+// ganacheCommand returns the command to spawn a ganache-cli.
+// The default value is `ganache-cli` and can be set by an ENV
+// variable. Example:
+// ERDSTALL_GANACHE_CMD="./my_ganache.sh --seed 123" go test ./...
+// The arguments for configuring the ganache will be appended
+// to the value of the ENV variable.
+func ganacheCommand() (cmd string, args []string) {
+	cmd = "ganache-cli"
+	if env := os.Getenv(envGanacheCmd); len(env) != 0 {
+		splits := strings.Split(env, " ")
+		cmd = splits[0]
+		args = splits[1:]
+	}
+	return
 }
