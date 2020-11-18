@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"math/rand"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -15,6 +16,7 @@ import (
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
+	"github.com/perun-network/erdstall/tee/test"
 )
 
 type Client struct {
@@ -62,6 +64,12 @@ func (c *Client) Address() common.Address {
 
 func (c *Client) SetMinedBlockNum(n uint64) {
 	c.minedBlockNum = n
+}
+
+// TxEpoch return the current transaction epoch as calculated from the currently
+// mined block number known to the client and the enclave parameters.
+func (c *Client) TxEpoch() tee.Epoch {
+	return c.params.TxEpoch(c.minedBlockNum + 1)
 }
 
 func (c *Client) UpdateLastBlockNum() {
@@ -116,7 +124,7 @@ func (c *Client) Withdraw(ctx context.Context, bal *tee.BalanceProof) error {
 func (c *Client) Send(recipient common.Address, amount *big.Int) error {
 	tx := &tee.Transaction{
 		Nonce:     c.nextNonce(),
-		Epoch:     c.params.TxEpoch(c.minedBlockNum + 1),
+		Epoch:     c.TxEpoch(),
 		Sender:    c.Address(),
 		Recipient: recipient,
 		Amount:    amount,
@@ -147,6 +155,82 @@ func (c *Client) SendToClient(recipient *Client, amount *big.Int) error {
 		recipient.balance.Add(recipient.balance, amount)
 	}
 	return err
+}
+
+// SendInvalidTxs sends several invalid transactions. It uses InvalidTxs, see
+// its documentation for which invalid transactions are used.
+func (c *Client) SendInvalidTxs(rng *rand.Rand, validRecipient common.Address) (errs []error) {
+	for _, tx := range c.InvalidTxs(rng, validRecipient) {
+		errs = append(errs, c.tr.Send(tx))
+	}
+	return errs
+}
+
+// InvalidTxs generates a list of several invalid transactions, each having one
+// of the following fields set to an invalid value:
+// - Sig (random)
+// - Nonce (+-1)
+// - Epoch (+-1)
+// - Recipient (random)
+// - Sender (random)
+// - Amount (1 above max, -1)
+// The remaining fields are set to a valid value.
+func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs []*tee.Transaction) {
+	invalidators := []func(*tee.Transaction){
+		func(tx *tee.Transaction) {
+			tx.Sig = make([]byte, 65)
+			rng.Read(tx.Sig)
+		},
+		func(tx *tee.Transaction) {
+			tx.Nonce += 1
+			c.SignTx(tx)
+		},
+		func(tx *tee.Transaction) {
+			tx.Nonce -= 1
+			c.SignTx(tx)
+		},
+		func(tx *tee.Transaction) {
+			tx.Epoch += 1
+			c.SignTx(tx)
+		},
+		func(tx *tee.Transaction) {
+			tx.Epoch -= 1
+			c.SignTx(tx)
+		},
+		func(tx *tee.Transaction) {
+			tx.Recipient = test.NewRandomAddress(rng)
+			c.SignTx(tx)
+		},
+		func(tx *tee.Transaction) {
+			tx.Sender = test.NewRandomAddress(rng)
+			if err := tx.SignAlien(c.params.Contract, c.ethClient.Account(), c.wallet); err != nil {
+				log.Panicf("Error signing alien tx: %v", err)
+			}
+		},
+		func(tx *tee.Transaction) {
+			tx.Amount = new(big.Int).Add(tx.Amount, big.NewInt(1))
+			c.SignTx(tx)
+		},
+		func(tx *tee.Transaction) {
+			tx.Amount = big.NewInt(-1)
+			c.SignTx(tx)
+		},
+	}
+
+	for _, invalidate := range invalidators {
+		// set to valid and then invalidate
+		tx := &tee.Transaction{
+			Nonce:     c.Nonce + 1, // only increment locally
+			Epoch:     c.TxEpoch(),
+			Sender:    c.ethClient.Account().Address,
+			Recipient: validRecipient,
+			Amount:    c.Balance(), // total balance is valid
+		}
+		invalidate(tx)
+		txs = append(txs, tx)
+	}
+
+	return txs
 }
 
 func (c *Client) SignTx(tx *tee.Transaction) {
