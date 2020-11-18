@@ -13,7 +13,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	wtest "perun.network/go-perun/backend/ethereum/wallet/test"
 	"perun.network/go-perun/pkg/test"
 
 	cltest "github.com/perun-network/erdstall/client/test"
@@ -126,6 +125,11 @@ func TestEnclave(t *testing.T) {
 	requiree.NoError(bob.SendToClient(alice, eth.EthToWeiInt(10)))
 	requiree.NoError(alice.SendToClient(bob, eth.EthToWeiInt(2)))
 
+	// send invalid txs
+	errs := alice.SendInvalidTxs(rng, bob.Address())
+	for i, err := range errs {
+		requiree.Errorf(err, "expected invalid tx #%d", i)
+	}
 
 	seal("txPhase", params.PhaseDuration)
 
