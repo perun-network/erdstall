@@ -33,10 +33,19 @@ type TextSigner interface {
 	SignText(account accounts.Account, text []byte) ([]byte, error)
 }
 
+// Sign signs the transaction with the given account and signer. It checks that
+// the account matches the transaction's sender.
 func (t *Transaction) Sign(contract common.Address, account accounts.Account, w TextSigner) error {
 	if account.Address != t.Sender {
 		return errors.New("not Sender's account")
 	}
+	return t.SignAlien(contract, account, w)
+}
+
+// SignAlien signs the transaction with the given account and signer,
+// irrespective of who's the transaction's sender. Should only be used in
+// testing.
+func (t *Transaction) SignAlien(contract common.Address, account accounts.Account, w TextSigner) error {
 	msg, err := EncodeTransaction(contract, *t)
 	if err != nil {
 		return fmt.Errorf("encoding tx: %w", err)
