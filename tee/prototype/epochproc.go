@@ -405,27 +405,25 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 
 	if tx.Epoch != ep.Number {
 		return fmt.Errorf("wrong TX Epoch: expected %d, got %d", ep.Number, tx.Epoch)
+	} else if tx.Amount.Sign() == -1 {
+		return fmt.Errorf("negative amount: %v", tx.Amount)
 	}
 
 	sender, oks := ep.balances[tx.Sender]
 	recipient, okr := ep.balances[tx.Recipient]
-	if !oks {
+	switch {
+	case !oks:
 		return fmt.Errorf("unknown sender: %x", tx.Sender)
-	}
-	if !okr {
+	case !okr:
 		return fmt.Errorf("unknown recipient: %x", tx.Recipient)
-	}
-	if sender.Value.Cmp(tx.Amount) == LT {
+	case sender.Value.Cmp(tx.Amount) == LT:
 		return fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
-	}
-	if tx.Nonce != sender.Nonce+1 {
-		return fmt.Errorf("sender tx nonce: %v, expected %v",
-			tx.Nonce, sender.Nonce+1)
+	case tx.Nonce != sender.Nonce+1:
+		return fmt.Errorf("sender tx nonce: %v, expected %v", tx.Nonce, sender.Nonce+1)
 	}
 
 	sender.Value.Sub(sender.Value, tx.Amount)
 	recipient.Value.Add(recipient.Value, tx.Amount)
-
 	sender.Nonce = tx.Nonce
 
 	return nil
