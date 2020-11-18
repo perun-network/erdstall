@@ -404,8 +404,7 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 	}
 
 	if tx.Epoch != ep.Number {
-		log.Errorf("txProc: wrong TX Epoch: expected %d, got %d", ep.Number, tx.Epoch)
-		return nil
+		return fmt.Errorf("wrong TX Epoch: expected %d, got %d", ep.Number, tx.Epoch)
 	}
 
 	sender, oks := ep.balances[tx.Sender]
