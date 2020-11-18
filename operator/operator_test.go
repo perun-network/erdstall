@@ -31,12 +31,14 @@ func TestOperator(t *testing.T) {
 	user1.TargetBalance = int64(10)
 	user2.TargetBalance = int64(5)
 
+	environment.WaitPhase()
+
 	// deposit
 	user1.Deposit()
 	user2.Deposit()
 	log.Info("operator_test.TestOperator: Deposited funds at contract")
 
-	environment.WaitPhase()
+	environment.WaitBlocks(1)
 
 	// get deposit proofs
 	user1.DepositProof()
@@ -168,6 +170,23 @@ func initEnvironment(t *testing.T) *environment {
 func (e *environment) WaitPhase() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(blockTime*e.cfg.PhaseDuration+1)*time.Second)
 	defer cancel()
+
+	e.WaitBlockPredicate(ctx, func(block uint64) bool {
+		return e.enclaveParameters.IsLastPhaseBlock(block)
+	})
+}
+
+func (e *environment) WaitBlocks(n int) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(blockTime*n+1)*time.Second)
+	defer cancel()
+
+	e.WaitBlockPredicate(ctx, func(uint64) bool {
+		n--
+		return n <= 0
+	})
+}
+
+func (e *environment) WaitBlockPredicate(ctx context.Context, p func(uint64) bool) {
 	heads := make(chan *types.Header)
 	sub, err := e.operator.ethClient.SubscribeNewHead(ctx, heads)
 	if err != nil {
@@ -178,7 +197,8 @@ func (e *environment) WaitPhase() {
 	for {
 		select {
 		case head := <-heads:
-			if e.enclaveParameters.IsLastPhaseBlock(head.Number.Uint64() - 1) {
+			if p(head.Number.Uint64()) {
+				time.Sleep(200 * time.Millisecond)
 				return
 			}
 		case <-ctx.Done():
