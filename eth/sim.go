@@ -4,10 +4,12 @@ package eth
 
 import (
 	"context"
+	"math/big"
 	"math/rand"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/common"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
 	ethchannel "perun.network/go-perun/backend/ethereum/channel"
@@ -53,4 +55,12 @@ func NewSimSetup(rng *rand.Rand, numAccounts int) *SimSetup {
 		Wallet:     pwallet,
 		HdWallet:   wallet,
 	}
+}
+
+func (s *SimSetup) Balance(a common.Address) *big.Int {
+	bal, err := s.SimBackend.BalanceAt(nil, a, nil) // nolint: staticcheck // sim backend ignores ctx
+	if err != nil {
+		panic(err)
+	}
+	return bal
 }
