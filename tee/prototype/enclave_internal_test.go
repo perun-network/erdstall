@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"perun.network/go-perun/pkg/test"
@@ -46,7 +47,7 @@ func TestEnclave(t *testing.T) {
 	operator := eth.NewClient(*setup.CB, operatorAd)
 
 	seal := func(phase string, n uint64) {
-		t.Logf("Adding %d new blocks to seal %s.", n, phase)
+		testLog("Adding %d new blocks to seal %s.", n, phase)
 		for i := uint64(0); i < n; i++ {
 			setup.SimBackend.Commit()
 		}
@@ -55,7 +56,7 @@ func TestEnclave(t *testing.T) {
 	sub, err := operator.SubscribeToBlocks()
 	requiree.NoError(err)
 	defer sub.Unsubscribe()
-	t.Log("Subscribed to new blocks")
+	testLog("Subscribed to new blocks")
 
 	requiree.NoError(operator.DeployContracts(&params))
 
@@ -103,7 +104,7 @@ func TestEnclave(t *testing.T) {
 		alice.Address(): alice,
 		bob.Address():   bob,
 	}
-	t.Log("Deposits made!")
+	testLog("Deposits made!")
 
 	dps, err := enc.DepositProofs()
 	requiree.NoError(err)
@@ -121,7 +122,7 @@ func TestEnclave(t *testing.T) {
 
 	// now: deposit epoch: 1, tx epoch: 0
 
-	t.Log("Sending three TXs.")
+	testLog("Sending three TXs.")
 
 	requiree.NoError(alice.SendToClient(bob, eth.EthToWeiInt(5)))
 	requiree.NoError(bob.SendToClient(alice, eth.EthToWeiInt(10)))
@@ -137,12 +138,12 @@ func TestEnclave(t *testing.T) {
 
 	// now: deposit epoch: 2, tx epoch: 1, exit epoch: 0
 
-	t.Log("Getting deposit proofs.")
+	testLog("Getting deposit proofs.")
 	dps, err = enc.DepositProofs()
 	requiree.NoError(err)
 	assert.Len(dps, 0)
 
-	t.Log("Getting balance proofs.")
+	testLog("Getting balance proofs.")
 	bps, err = enc.BalanceProofs()
 	requiree.NoError(err)
 	verifyBalanceProofs(t, params, balances, bps)
@@ -157,19 +158,19 @@ func TestEnclave(t *testing.T) {
 		}
 	}
 
-	t.Log("Sending two exit TXs.")
+	testLog("Sending two exit TXs.")
 	for _, bp := range bps {
 		doWith(bp, alice.Exit, bob.Exit)
 	}
 
 	// Signalling the enclave to stop now, so that it doesn't start new epochs on
 	// the next block.
-	t.Log("Set Enclave to shutdown after next phase.")
+	testLog("Set Enclave to shutdown after next phase.")
 	enc.Shutdown()
 
 	seal("exitPhase", 1)
 
-	t.Log("Sending two withdrawal TXs.")
+	testLog("Sending two withdrawal TXs.")
 	for _, bp := range bps {
 		doWith(bp, alice.Withdraw, bob.Withdraw)
 	}
@@ -232,4 +233,8 @@ func verifyBalanceProofs(t require.TestingT,
 		require.Zerof(got.Cmp(exp),
 			"balance mismatch for %s, got: %v, expected: %v [ETH]", bp.Balance.Account.String(), eth.WeiToEthFloat(got), eth.WeiToEthFloat(exp))
 	}
+}
+
+func testLog(format string, args ...interface{}) {
+	log.Infof("Test: "+format, args...)
 }
