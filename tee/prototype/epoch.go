@@ -58,7 +58,7 @@ func (e *Epoch) applyExits(exiters exitersSet) {
 	log := log.WithField("epoch", e.Number)
 	log.Debugf("removing %d exiters", len(exiters))
 	for _, exiter := range exiters {
-		log.Tracef("removed %s", exiter.Hash().String())
+		log.Tracef("removed %s", exiter.String())
 		delete(e.balances, exiter)
 	}
 }

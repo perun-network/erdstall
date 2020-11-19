@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"fmt"
 	"math/big"
 	"net/rpc"
 	"testing"
@@ -13,15 +12,14 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
+	log "github.com/sirupsen/logrus"
+
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 )
 
-const gasLimit = 2000000
 const defaultContextTimeout = 10 * time.Second
-const proofResponseTimeout = 10 * time.Second
-const proofRequestInterval = 500 * time.Millisecond
 
 func newDefaultContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), defaultContextTimeout)
@@ -39,6 +37,9 @@ type User struct {
 	nonceCounter      uint64
 	TargetBalance     int64
 	enclaveParameters tee.Parameters
+	dp                tee.DepositProof
+	bp                tee.BalanceProof
+	epoch             tee.Epoch
 }
 
 // Address returns the user's account address.
@@ -61,7 +62,9 @@ func CreateUser(
 	contractAddress common.Address,
 	enclaveParameters tee.Parameters,
 ) *User {
-	ethClient, err := eth.CreateEthereumClient(ethURL, wallet, account)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ethClient, err := eth.CreateEthereumClient(ctx, ethURL, wallet, account)
 	if err != nil {
 		t.Fatal("creating ethereum wallet and client:", err)
 	}
@@ -76,7 +79,7 @@ func CreateUser(
 		t.Fatal("loading contract:", err)
 	}
 
-	return &User{t, wallet, account, ethClient, rpcClient, contract, contractAddress, 0, 0, enclaveParameters}
+	return &User{t, wallet, account, ethClient, rpcClient, contract, contractAddress, 0, 0, enclaveParameters, tee.DepositProof{}, tee.BalanceProof{}, 0}
 }
 
 // Deposit deposits the current target balance at the TEE Plasma.
@@ -104,41 +107,40 @@ func (u *User) Deposit() {
 	if r.Status != types.ReceiptStatusSuccessful {
 		u.Fatal("deposit transaction failed:", err)
 	}
+	log.Debugf("Deposited %d in block %d", u.TargetBalance, r.BlockNumber.Uint64())
 }
 
 // DepositProof returns the deposit proof for the last epoch.
-func (u *User) DepositProof() *tee.DepositProof {
-	var dp tee.DepositProof
-	err := u.rpcClient.Call("RemoteEnclave.GetDepositProof", u.Address(), &dp)
+func (u *User) DepositProof() {
+	err := u.rpcClient.Call("RemoteEnclave.GetDepositProof", u.Address(), &u.dp)
 	if err != nil {
 		u.Fatal("calling RemoteEnclave.GetDepositProof:", err)
 	}
 
-	if dp.Balance.Value.Int64() != u.TargetBalance {
+	if u.dp.Balance.Value.Int64() != u.TargetBalance {
 		u.FailNow()
 	}
 
-	return &dp
+	log.Debug("Got deposit proof for epoch #", u.dp.Balance.Epoch)
+	u.epoch = u.dp.Balance.Epoch
 }
 
 // Transfer transfers the specified amount to the specified receiver.
 func (u *User) Transfer(receiver *User, amount int64) {
-	epoch, err := u.TransactionEpoch()
-	if err != nil {
-		u.Fatal("reading transaction epoch:", err)
-	}
-
+	log.Debug("Sending transfer in epoch #", u.dp.Balance.Epoch)
 	tx := tee.Transaction{
 		Nonce:     u.Nonce(),
-		Epoch:     epoch,
+		Epoch:     u.epoch,
 		Sender:    u.Address(),
 		Recipient: receiver.Address(),
 		Amount:    big.NewInt(amount),
 	}
 
-	tx.Sign(u.contractAddress, u.Account(), u.wallet)
+	if err := tx.Sign(u.contractAddress, u.Account(), u.wallet); err != nil {
+		u.Fatal("Signing transaction:", err)
+	}
 
-	err = u.rpcClient.Call("RemoteEnclave.AddTransaction", tx, nil)
+	err := u.rpcClient.Call("RemoteEnclave.AddTransaction", tx, nil)
 	if err != nil {
 		u.Fatal("RemoteEnclave.AddTransaction error:", err)
 	}
@@ -148,38 +150,24 @@ func (u *User) Transfer(receiver *User, amount int64) {
 }
 
 // BalanceProof returns the balance proof for the last epoch.
-func (u *User) BalanceProof() *tee.BalanceProof {
-	var bp tee.BalanceProof
-	err := u.rpcClient.Call("RemoteEnclave.GetBalanceProof", u.Address(), &bp)
+func (u *User) BalanceProof() {
+	err := u.rpcClient.Call("RemoteEnclave.GetBalanceProof", u.Address(), &u.bp)
 	if err != nil {
 		u.Fatal("calling RemoteEnclave.GetBalanceProof:", err)
 	}
 
-	if bp.Balance.Value.Int64() != u.TargetBalance {
-		u.Errorf("incorrect balance, got %d, expected %d", bp.Balance.Value.Int64(), u.TargetBalance)
+	if u.bp.Balance.Value.Int64() != u.TargetBalance {
+		u.Errorf("incorrect balance, got %d, expected %d", u.bp.Balance.Value.Int64(), u.TargetBalance)
 	}
 
-	return &bp
+	log.Debug("Got balance proof for epoch #", u.bp.Balance.Epoch)
+	u.epoch = u.bp.Balance.Epoch + 1
 }
 
 // Nonce returns the next nonce.
 func (u *User) Nonce() uint64 {
 	u.nonceCounter++
 	return u.nonceCounter
-}
-
-// TransactionEpoch returns the current transaction epoch.
-func (u *User) TransactionEpoch() (uint64, error) {
-	ctx, cancel := newDefaultContext()
-	defer cancel()
-
-	blockHeader, err := u.ethClient.BlockByNumber(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("reading block header: %w", err)
-	}
-
-	return u.enclaveParameters.TxEpoch(blockHeader.NumberU64()), nil
-
 }
 
 // SubscribeToExitEvents subscribes the user the exit events.

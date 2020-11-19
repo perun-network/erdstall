@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
@@ -105,12 +106,21 @@ func (cl *Client) NewTransactor(ctx context.Context) (*bind.TransactOpts, error)
 }
 
 // CreateEthereumClient creates and connects a new ethereum client.
-func CreateEthereumClient(url string, wallet accounts.Wallet, a accounts.Account) (*Client, error) {
-	ethClient, err := ethclient.Dial(url)
-	if err != nil {
-		return nil, fmt.Errorf("dialing ethereum: %w", err)
+func CreateEthereumClient(ctx context.Context, url string, wallet accounts.Wallet, a accounts.Account) (*Client, error) {
+	for {
+		ethClient, err := ethclient.DialContext(ctx, url)
+
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("dialing ethereum node: %w", err)
+			default:
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+		}
+		return NewClientForWalletAndAccount(ethClient, wallet, a), nil
 	}
-	return NewClientForWalletAndAccount(ethClient, wallet, a), nil
 }
 
 // Account returns the account of the client.
@@ -299,7 +309,7 @@ func (cl *Client) SubscribeToDeposited(ctx context.Context, contract *bindings.E
 		return err
 	}
 	it, err := contract.FilterDeposited(fOpts, epochs, accs)
-	defer it.Close()
+	defer it.Close() // nolint: staticcheck
 	if err != nil {
 		return err
 	}

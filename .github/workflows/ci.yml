@@ -1,0 +1,43 @@
+name: Go
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v2
+      with:
+        go-version: ^1.15
+
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Dependencies
+      run: |
+        go get -v -t -d ./...
+        docker pull trufflesuite/ganache-cli
+        # We use the latest version of golangci-lint here.
+        # This will produce occasional errors in the future when the linters
+        # are updated, but then we always get the newest warnings instead
+        # of having to update the CI manually.
+        docker pull golangci/golangci-lint
+    
+    - name: Vet
+      run: docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint golangci-lint run
+
+    - name: Build
+      run: |
+        go build -o op ./cmd/operator
+        go build -o cl ./cmd/client
+
+    - name: Test
+      run: go test -timeout 60s ./...
+      env:
+        ERDSTALL_GANACHE_CMD: docker run --rm --net=host trufflesuite/ganache-cli

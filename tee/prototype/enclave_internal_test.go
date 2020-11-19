@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"perun.network/go-perun/pkg/test"
@@ -46,7 +47,7 @@ func TestEnclave(t *testing.T) {
 	operator := eth.NewClient(*setup.CB, operatorAd)
 
 	seal := func(phase string, n uint64) {
-		t.Logf("Adding %d new blocks to seal %s.", n, phase)
+		testLog("Adding %d new blocks to seal %s.", n, phase)
 		for i := uint64(0); i < n; i++ {
 			setup.SimBackend.Commit()
 		}
@@ -55,7 +56,7 @@ func TestEnclave(t *testing.T) {
 	sub, err := operator.SubscribeToBlocks()
 	requiree.NoError(err)
 	defer sub.Unsubscribe()
-	t.Log("Subscribed to new blocks")
+	testLog("Subscribed to new blocks")
 
 	requiree.NoError(operator.DeployContracts(&params))
 
@@ -80,18 +81,18 @@ func TestEnclave(t *testing.T) {
 	encTr := &cltest.EnclaveTransactor{Enclave: enc} // transact directly on the enclave, bypassing the operator
 	aliceEthCl := eth.NewClient(*setup.CB, aliceAd)
 	alice, err := cltest.NewClient(params, setup.HdWallet, aliceEthCl, encTr)
+	require.NoError(t, err)
 	bobEthCl := eth.NewClient(*setup.CB, bobAd)
 	bob, err := cltest.NewClient(params, setup.HdWallet, bobEthCl, encTr)
+	require.NoError(t, err)
 
-	// Do deposits
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	aliceInitBal, err := setup.SimBackend.BalanceAt(ctx, alice.Address(), nil)
-	requiree.NoError(err)
-	bobInitBal, err := setup.SimBackend.BalanceAt(ctx, bob.Address(), nil)
-	requiree.NoError(err)
+	aliceInitBal := setup.Balance(alice.Address())
+	bobInitBal := setup.Balance(bob.Address())
 
+	// Do deposits
 	initValue := eth.EthToWeiInt(100)
 	requiree.NoError(alice.Deposit(ctx, initValue))
 	requiree.NoError(bob.Deposit(ctx, initValue))
@@ -101,7 +102,7 @@ func TestEnclave(t *testing.T) {
 		alice.Address(): alice,
 		bob.Address():   bob,
 	}
-	t.Log("Deposits made!")
+	testLog("Deposits made!")
 
 	dps, err := enc.DepositProofs()
 	requiree.NoError(err)
@@ -119,7 +120,7 @@ func TestEnclave(t *testing.T) {
 
 	// now: deposit epoch: 1, tx epoch: 0
 
-	t.Log("Sending three TXs.")
+	testLog("Sending three TXs.")
 
 	requiree.NoError(alice.SendToClient(bob, eth.EthToWeiInt(5)))
 	requiree.NoError(bob.SendToClient(alice, eth.EthToWeiInt(10)))
@@ -135,47 +136,58 @@ func TestEnclave(t *testing.T) {
 
 	// now: deposit epoch: 2, tx epoch: 1, exit epoch: 0
 
-	t.Log("Getting deposit proofs.")
+	testLog("Getting deposit proofs.")
 	dps, err = enc.DepositProofs()
 	requiree.NoError(err)
 	assert.Len(dps, 0)
 
-	t.Log("Getting balance proofs.")
+	testLog("Getting balance proofs.")
 	bps, err = enc.BalanceProofs()
 	requiree.NoError(err)
 	verifyBalanceProofs(t, params, balances, bps)
 
 	doWith := func(bp *tee.BalanceProof, aliceDo, bobDo clientAction) {
-		switch bp.Balance.Account {
+		switch a := bp.Balance.Account; a {
 		case alice.Address():
 			requiree.NoError(aliceDo(ctx, bp))
 		case bob.Address():
 			requiree.NoError(bobDo(ctx, bp))
 		default:
+			t.Fatalf("Unknown account: %s", a.String())
 		}
 	}
 
-	t.Log("Sending two exit TXs.")
+	testLog("Sending two exit TXs.")
 	for _, bp := range bps {
 		doWith(bp, alice.Exit, bob.Exit)
 	}
 
 	// Signalling the enclave to stop now, so that it doesn't start new epochs on
 	// the next block.
-	t.Log("Set Enclave to shutdown after next phase.")
+	testLog("Set Enclave to shutdown after next phase.")
 	enc.Shutdown()
 
 	seal("exitPhase", 1)
 
-	t.Log("Sending two withdrawal TXs.")
+	// Check balance proofs after all users exited.
+	// This also serves as a synchronization point so that enough blocks are
+	// processed by the enclave before the block subscription is closed.
+	bpsExit, err := enc.BalanceProofs()
+	requiree.NoError(err)
+	requiree.Len(bpsExit, 0, "all users should have exited the system")
+
+	testLog("Closing block subscription and waiting for operator routines...")
+	sub.Unsubscribe()
+	ct.Wait("operator")
+
+	testLog("Sending two withdrawal TXs")
 	for _, bp := range bps {
 		doWith(bp, alice.Withdraw, bob.Withdraw)
 	}
 
-	aliceNewBal, err := setup.SimBackend.BalanceAt(ctx, alice.Address(), nil)
-	requiree.NoError(err)
-	bobNewBal, err := setup.SimBackend.BalanceAt(ctx, bob.Address(), nil)
-	requiree.NoError(err)
+	testLog("Checking final balances.")
+	aliceNewBal := setup.Balance(alice.Address())
+	bobNewBal := setup.Balance(bob.Address())
 	requiree.NoError(checkBals(
 		aliceInitBal,
 		aliceNewBal,
@@ -183,9 +195,6 @@ func TestEnclave(t *testing.T) {
 		bobNewBal,
 		eth.EthToWeiInt(3),
 	))
-
-	sub.Unsubscribe()
-	ct.Wait("operator")
 }
 
 // checkBals checks whether the new balance of Alice has increased by `difference`
@@ -230,4 +239,8 @@ func verifyBalanceProofs(t require.TestingT,
 		require.Zerof(got.Cmp(exp),
 			"balance mismatch for %s, got: %v, expected: %v [ETH]", bp.Balance.Account.String(), eth.WeiToEthFloat(got), eth.WeiToEthFloat(exp))
 	}
+}
+
+func testLog(format string, args ...interface{}) {
+	log.Infof("Test: "+format, args...)
 }

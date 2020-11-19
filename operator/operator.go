@@ -84,7 +84,9 @@ func Setup(cfg *Config) *Operator {
 	operatorAccount, err := wallet.Derive(operatorAccountDerivationPath, true)
 	AssertNoError(err)
 
-	client, err := eth.CreateEthereumClient(cfg.EthereumNodeURL, wallet, operatorAccount)
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	client, err := eth.CreateEthereumClient(ctx, cfg.EthereumNodeURL, wallet, operatorAccount)
 	AssertNoError(err)
 	log.Info("Operator.Setup: Ethereum client initialized")
 

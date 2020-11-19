@@ -60,6 +60,7 @@ func testSigVerify(t *testing.T, rng *rand.Rand, params *tee.Parameters, contr *
 	for i := 0; i < 100; i++ {
 		bal := randomBalance(rng)
 		encodedByGo, err := tee.EncodeBalanceProof(params.Contract, bal)
+		require.NoError(t, err)
 		sig, err := s.HdWallet.SignText(s.Accounts[0], crypto.Keccak256(encodedByGo))
 		sig[64] += 27
 

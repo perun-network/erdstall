@@ -3,6 +3,7 @@
 package main
 
 import (
+	log "github.com/sirupsen/logrus"
 	perunchannel "perun.network/go-perun/backend/ethereum/channel"
 	perunhd "perun.network/go-perun/backend/ethereum/wallet/hd"
 
@@ -30,5 +31,7 @@ func main() {
 	client := client.NewClient(cfg, rpc, events, chain, wallet) // Erdstall protocol client
 	go gui.RunGui(client, events)                               // Run the GUI
 
-	client.Run() // Run the protocol
+	if err := client.Run(); err != nil { // Run the protocol
+		log.WithError(err).Fatal("Client crashed")
+	}
 }
