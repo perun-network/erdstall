@@ -132,6 +132,7 @@ func (e *Enclave) Run(params tee.Parameters) error {
 // The Enclave Interface methods will return an ErrEnclaveStopped error after
 // the Enclave shut down.
 func (e *Enclave) Shutdown() {
+	log.Info("Enclave: shutting down when phase is finished")
 	if !e.running.TryUnset() {
 		log.Panic("Enclave not running")
 	}
