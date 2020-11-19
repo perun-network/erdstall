@@ -86,15 +86,13 @@ func TestEnclave(t *testing.T) {
 	bob, err := cltest.NewClient(params, setup.HdWallet, bobEthCl, encTr)
 	require.NoError(t, err)
 
-	// Do deposits
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	aliceInitBal, err := setup.SimBackend.BalanceAt(ctx, alice.Address(), nil)
-	requiree.NoError(err)
-	bobInitBal, err := setup.SimBackend.BalanceAt(ctx, bob.Address(), nil)
-	requiree.NoError(err)
+	aliceInitBal := setup.Balance(alice.Address())
+	bobInitBal := setup.Balance(bob.Address())
 
+	// Do deposits
 	initValue := eth.EthToWeiInt(100)
 	requiree.NoError(alice.Deposit(ctx, initValue))
 	requiree.NoError(bob.Deposit(ctx, initValue))
@@ -149,12 +147,13 @@ func TestEnclave(t *testing.T) {
 	verifyBalanceProofs(t, params, balances, bps)
 
 	doWith := func(bp *tee.BalanceProof, aliceDo, bobDo clientAction) {
-		switch bp.Balance.Account {
+		switch a := bp.Balance.Account; a {
 		case alice.Address():
 			requiree.NoError(aliceDo(ctx, bp))
 		case bob.Address():
 			requiree.NoError(bobDo(ctx, bp))
 		default:
+			t.Fatalf("Unknown account: %s", a.String())
 		}
 	}
 
@@ -170,15 +169,25 @@ func TestEnclave(t *testing.T) {
 
 	seal("exitPhase", 1)
 
-	testLog("Sending two withdrawal TXs.")
+	// Check balance proofs after all users exited.
+	// This also serves as a synchronization point so that enough blocks are
+	// processed by the enclave before the block subscription is closed.
+	bpsExit, err := enc.BalanceProofs()
+	requiree.NoError(err)
+	requiree.Len(bpsExit, 0, "all users should have exited the system")
+
+	testLog("Closing block subscription and waiting for operator routines...")
+	sub.Unsubscribe()
+	ct.Wait("operator")
+
+	testLog("Sending two withdrawal TXs")
 	for _, bp := range bps {
 		doWith(bp, alice.Withdraw, bob.Withdraw)
 	}
 
-	aliceNewBal, err := setup.SimBackend.BalanceAt(ctx, alice.Address(), nil)
-	requiree.NoError(err)
-	bobNewBal, err := setup.SimBackend.BalanceAt(ctx, bob.Address(), nil)
-	requiree.NoError(err)
+	testLog("Checking final balances.")
+	aliceNewBal := setup.Balance(alice.Address())
+	bobNewBal := setup.Balance(bob.Address())
 	requiree.NoError(checkBals(
 		aliceInitBal,
 		aliceNewBal,
@@ -186,9 +195,6 @@ func TestEnclave(t *testing.T) {
 		bobNewBal,
 		eth.EthToWeiInt(3),
 	))
-
-	sub.Unsubscribe()
-	ct.Wait("operator")
 }
 
 // checkBals checks whether the new balance of Alice has increased by `difference`
