@@ -48,7 +48,7 @@ func (re *RemoteEnclave) Run(p tee.Parameters) error {
 }
 
 func (re *RemoteEnclave) Shutdown() {
-	if err := re.client.Call("Node.Shutdown", &Void{}, &Void{}); err != nil {
+	if err := re.client.Call("Node.Shutdown", Void{}, &Void{}); err != nil {
 		log.Error(err)
 	}
 }
@@ -75,15 +75,15 @@ func (re *RemoteEnclave) ProcessTXs(txs ...*tee.Transaction) error {
 }
 
 func (re *RemoteEnclave) DepositProofs() (res []*tee.DepositProof, err error) {
-	err = re.client.Call("Node.DepositProofs", &Void{}, &res)
+	err = re.client.Call("Node.DepositProofs", Void{}, &res)
 	return
 }
 
 func (re *RemoteEnclave) BalanceProofs() (res []*tee.BalanceProof, err error) {
-	err = re.client.Call("Node.BalanceProofs", &Void{}, &res)
+	err = re.client.Call("Node.BalanceProofs", Void{}, &res)
 	return
 }
 
 func (re *RemoteEnclave) Stop() error {
-	return re.client.Call("Node.Stop", &Void{}, &Void{})
+	return re.client.Call("Node.Stop", Void{}, &Void{})
 }
