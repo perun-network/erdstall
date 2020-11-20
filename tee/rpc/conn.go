@@ -3,7 +3,6 @@
 package rpc
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -61,11 +60,11 @@ func (re *RemoteEnclave) Init() (common.Address, []byte, error) {
 func (re *RemoteEnclave) ProcessBlocks(blocks ...*tee.Block) error {
 	encodedBlocks := make([][]byte, len(blocks))
 	for i, b := range blocks {
-		var buf bytes.Buffer
-		if err := b.EncodeRLP(&buf); err != nil {
+		data, err := b.Encode()
+		if err != nil {
 			return fmt.Errorf("encoding block: %w", err)
 		}
-		encodedBlocks[i] = buf.Bytes()
+		encodedBlocks[i] = data
 	}
 	return re.client.Call("Node.ProcessBlocks", encodedBlocks, &Void{})
 }

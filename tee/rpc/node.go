@@ -3,13 +3,11 @@
 package rpc
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"net/rpc"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/perun-network/erdstall/tee"
 
 	"perun.network/go-perun/log"
@@ -73,9 +71,8 @@ func (n *Node) Run(p tee.Parameters, _ *Void) (err error) {
 func (n *Node) ProcessBlocks(encodedBlocks [][]byte, _ *Void) error {
 	blocks := make([]*tee.Block, len(encodedBlocks))
 	for i, be := range encodedBlocks {
-		stream := rlp.NewStream(bytes.NewReader(be), 0)
 		var b tee.Block
-		if err := b.DecodeRLP(stream); err != nil {
+		if err := b.Decode(be); err != nil {
 			return fmt.Errorf("decoding block: %w", err)
 		}
 		blocks[i] = &b

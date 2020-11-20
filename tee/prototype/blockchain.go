@@ -61,8 +61,8 @@ func (b *blockchain) PruneUntil(blockNum uint64) {
 
 // verifyBlock verifies that block is a valid next block after parent.
 func verifyBlock(block, parent *tee.Block) error {
-	bHash := block.Header().ParentHash
-	pHash := parent.Hash()
+	bHash := block.Block.Header().ParentHash
+	pHash := parent.Block.Hash()
 
 	// TODO: Extend validation to test consensus (PoW).
 	//   This function then probably becomes a method on blockchain after we add a

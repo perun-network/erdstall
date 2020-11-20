@@ -3,10 +3,13 @@
 package tee
 
 import (
+	"bytes"
+	"encoding/json"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type (
@@ -81,7 +84,7 @@ type (
 	// A Block is a go-ethereum block together with its receipts. go-ethereum's
 	// types.Block type doesn't store the receipts...
 	Block struct {
-		types.Block
+		Block    types.Block
 		Receipts types.Receipts
 	}
 
@@ -133,4 +136,42 @@ func (b *Balance) Clone() Balance {
 		Account: b.Account,
 		Value:   new(big.Int).Set(b.Value),
 	}
+}
+
+func (b *Block) Encode() ([]byte, error) {
+	rs, err := json.Marshal(b.Receipts)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	if err := b.Block.EncodeRLP(&out); err != nil {
+		return nil, err
+	}
+	if _, err := out.Write(rs); err != nil {
+		return nil, err
+	}
+	obj := map[string]interface{}{
+		"Block":    out.Bytes(),
+		"Receipts": rs,
+	}
+	return json.Marshal(obj)
+}
+
+func (b *Block) Decode(data []byte) error {
+	obj := struct {
+		Block    []byte
+		Receipts []byte
+	}{}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(obj.Receipts, &b.Receipts); err != nil {
+		return err
+	}
+	stream := rlp.NewStream(bytes.NewReader(obj.Block), 0)
+	return b.Block.DecodeRLP(stream)
+}
+
+func (b *Block) NumberU64() uint64 {
+	return b.Block.NumberU64()
 }
