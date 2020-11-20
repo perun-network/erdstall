@@ -67,15 +67,23 @@ func New(
 
 // Setup creates an operator from the given configuration.
 func Setup(cfg *Config) *Operator {
+	return SetupWithEnclave(cfg, nil)
+}
+
+// SetupWithEnclave creates an operator with the requested enclave. If the
+// enclave is nil, creates a new prototype enclave.
+func SetupWithEnclave(cfg *Config, enclave tee.Enclave) *Operator {
 	wallet, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
 	AssertNoError(err)
 
-	enclaveAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.EnclaveDerivationPath)
-	enclaveAccount, err := wallet.Derive(enclaveAccountDerivationPath, true)
-	AssertNoError(err)
-	log.Debug("Operator.Setup: Enclave account loaded")
+	if enclave == nil {
+		enclaveAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.EnclaveDerivationPath)
+		enclaveAccount, err := wallet.Derive(enclaveAccountDerivationPath, true)
+		AssertNoError(err)
+		log.Debug("Operator.Setup: Enclave account loaded")
+		enclave = prototype.NewEnclaveWithAccount(wallet, enclaveAccount)
+	}
 
-	enclave := prototype.NewEnclaveWithAccount(wallet, enclaveAccount)
 	enclavePublicKey, _, err := enclave.Init()
 	AssertNoError(err)
 	log.Info("Operator.Setup: Enclave created")
@@ -101,7 +109,11 @@ func Setup(cfg *Config) *Operator {
 	AssertNoError(err)
 	log.Infof("Operator.Setup: Contract deployed at %s", params.Contract.String())
 
-	operator, err := New(enclave, params, client, cfg.RespondChallenges)
+	operator, err := New(
+		enclave,
+		params,
+		client,
+		cfg.RespondChallenges)
 	AssertNoError(err)
 
 	return operator
