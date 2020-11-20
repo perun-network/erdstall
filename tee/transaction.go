@@ -14,8 +14,8 @@ import (
 
 // Hash hashes a transaction.
 func (t *Transaction) Hash() common.Hash {
-	if t.hash != [32]byte{} {
-		return t.hash
+	if t.HashV != [32]byte{} {
+		return t.HashV
 	}
 	bs := make([]byte, 16)
 	binary.LittleEndian.PutUint64(bs, t.Nonce)
