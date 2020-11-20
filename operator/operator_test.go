@@ -2,7 +2,9 @@ package operator
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
+	"net"
 	"os/exec"
 	"testing"
 	"time"
@@ -16,6 +18,8 @@ import (
 
 	"github.com/perun-network/erdstall/operator/test"
 	"github.com/perun-network/erdstall/tee"
+	"github.com/perun-network/erdstall/tee/prototype"
+	"github.com/perun-network/erdstall/tee/rpc"
 )
 
 func TestOperator(t *testing.T) {
@@ -114,6 +118,7 @@ type environment struct {
 	user2             *test.User
 	errg              *errors.Gatherer
 	enclaveParameters tee.Parameters
+	stopEnclave       func() error
 }
 
 const blockTime = 1 // block mining interval in seconds
@@ -136,7 +141,9 @@ func initEnvironment(t *testing.T) *environment {
 		log.Fatal(err)
 	}
 
-	operator := Setup(cfg)
+	enclave := createRemoteEnclave(cfg)
+	operator := SetupWithEnclave(cfg, enclave)
+
 	params := operator.EnclaveParams()
 	log.Info("operator_test.initEnvironment: Created operator")
 	errg.Go(func() error {
@@ -164,7 +171,24 @@ func initEnvironment(t *testing.T) *environment {
 
 	log.Info("operator_test.initEnvironment: Created users")
 
-	return &environment{t, cfg, cmd, operator, user1, user2, errg, params}
+	return &environment{t, cfg, cmd, operator, user1, user2, errg, params, enclave.Stop}
+}
+
+func createRemoteEnclave(cfg *Config) *rpc.RemoteEnclave {
+	// Load wallet, create enclave.
+	wallet, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
+	AssertNoError(err)
+
+	enclaveAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.EnclaveDerivationPath)
+	enclaveAccount, err := wallet.Derive(enclaveAccountDerivationPath, true)
+	AssertNoError(err)
+
+	node := rpc.NewNode(prototype.NewEnclaveWithAccount(wallet, enclaveAccount))
+	listener := newMockListener()
+	node.Start(listener)
+	conn, err := listener.dial()
+	AssertNoError(err)
+	return rpc.NewRemoteEnclave(conn)
 }
 
 func (e *environment) WaitPhase() {
@@ -215,6 +239,9 @@ func (e *environment) Shutdown() {
 			log.Warn("Could not kill process:", err)
 		}
 	}
+	if err := e.stopEnclave(); err != nil {
+		log.Errorf("Shutdown: %v", err)
+	}
 }
 
 func newDefaultConfig() *Config {
@@ -229,4 +256,29 @@ func newDefaultConfig() *Config {
 		8080,
 		true,
 	}
+}
+
+type mockListener struct{ conn chan net.Conn }
+
+func (l *mockListener) Accept() (net.Conn, error) {
+	c := <-l.conn
+	if c == nil {
+		return nil, stderrors.New("closed")
+	}
+	return c, nil
+}
+func (l *mockListener) Close() (_ error) { close(l.conn); return }
+func (*mockListener) Addr() net.Addr     { panic(nil) }
+func (l *mockListener) dial() (_ net.Conn, err error) {
+	a, b := net.Pipe()
+	err = stderrors.New("closed")
+	func() {
+		defer func() { _ = recover() }()
+		l.conn <- b
+		err = nil
+	}()
+	return a, err
+}
+func newMockListener() *mockListener {
+	return &mockListener{conn: make(chan net.Conn)}
 }
