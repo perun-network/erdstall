@@ -7,7 +7,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"net/rpc"
+	stdrpc "net/rpc"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -20,6 +20,7 @@ import (
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/tee/prototype"
+	"github.com/perun-network/erdstall/tee/rpc"
 )
 
 // Operator resprents a TEE Plasma operator.
@@ -117,6 +118,20 @@ func SetupWithEnclave(cfg *Config, enclave tee.Enclave) *Operator {
 	AssertNoError(err)
 
 	return operator
+}
+
+// RemoteSetup creates an operator setup that dials the specified remote
+// enclave.
+func RemoteSetup(
+	cfg *Config,
+	enclaveAddr string,
+) (op *Operator, err error) {
+	e, err := rpc.DialEnclave(enclaveAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return SetupWithEnclave(cfg, e), nil
 }
 
 // Serve starts the operator's main routine.
@@ -285,10 +300,10 @@ func (operator *Operator) handleBalanceProofs() error {
 
 func (operator *Operator) handleRPC(port int) error {
 	remoteEnclave := newRemoteEnclave(operator)
-	if err := rpc.Register(remoteEnclave); err != nil {
+	if err := stdrpc.Register(remoteEnclave); err != nil {
 		return fmt.Errorf("registering remote enclave interface: %w", err)
 	}
-	rpc.HandleHTTP()
+	stdrpc.HandleHTTP()
 
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
