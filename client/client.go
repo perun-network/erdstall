@@ -386,6 +386,60 @@ func (c *Client) BalanceProofWatcher() {
 	}
 }
 
+// FrozenWatcher listens for Frozen events and calls WithdrawFrozen
+// if a balance proof is available.
+func (c *Client) FrozenWatcher() {
+	ctx, cancel := context.WithCancel(c.Ctx())
+	defer cancel()
+	sub, err := c.ethClient.SubscribeFrozen(ctx, c.contract, nil)
+	if err != nil {
+		c.logError("Frozen event subscription: %v", err)
+		return
+	}
+	defer sub.Unsubscribe()
+
+	select {
+	case err := <-sub.Err():
+		c.logError("Frozen event subscription: %v", err)
+		return
+	case event := <-sub.Events():
+		c.handleFrozen(event)
+	}
+}
+
+func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
+	epoch := event.Epoch
+	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+	c.log("❄️ Contract Frozen in epoch #%d", epoch)
+
+	c.balMtx.Lock()
+	defer c.balMtx.Unlock()
+	bal, ok := c.balances[epoch]
+	if !ok {
+		c.logOffChain("No balance-proof available for freeze")
+		return
+	}
+	status := make(chan *CmdStatus)
+	defer close(status)
+	go func() {
+		for msg := range status {
+			if msg.Err != nil {
+				c.logOnChain(msg.Err.Error())
+			} else {
+				c.logOnChain(msg.Msg)
+			}
+		}
+	}()
+	_, err := c.sendTx("WithdrawFrozen", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.WithdrawFrozen(auth, bindings.ErdstallBalance{Epoch: epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
+	}, status)
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("WithdrawFrozen TX: %w", err)}
+		return
+	}
+	c.log("❄️ WithdrawFrozen: Complete")
+}
+
 func (c *Client) lastBal() *EpochBalance {
 	c.balMtx.Lock()
 	defer c.balMtx.Unlock()
@@ -502,6 +556,7 @@ func (c *Client) listenOnChain() error {
 		subError <- c.ethClient.SubscribeEpochs(c.Ctx(), *c.params, epochs, blocks)
 	}()
 	go c.BalanceProofWatcher()
+	go c.FrozenWatcher()
 
 	for !c.IsClosed() {
 		select {
