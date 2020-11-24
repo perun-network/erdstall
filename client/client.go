@@ -39,10 +39,10 @@ type Client struct {
 	txNonce      uint64
 	balances     map[uint64]EpochBalance // epoch => balance
 	// Initialized in Run()
-	currentBlock uint64 // Atomic
-	contract     *bindings.Erdstall
-	params       *tee.Parameters
-	events       chan *Event
+	lastBlock uint64 // Atomic
+	contract  *bindings.Erdstall
+	params    *tee.Parameters
+	events    chan *Event
 	// balMtx protects balances.
 	balMtx sync.Mutex
 }
@@ -189,7 +189,7 @@ func (c *Client) CmdSend(status chan *CmdStatus, args ...string) {
 	}
 	amount := eth.EthToWeiFloat(_amount)
 	status <- &CmdStatus{Msg: "Creating Message"}
-	tx, err := c.createTx(receiver, amount)
+	tx, err := c.createTransfer(receiver, amount)
 	if err != nil {
 		status <- &CmdStatus{Err: err}
 		return
@@ -200,8 +200,8 @@ func (c *Client) CmdSend(status chan *CmdStatus, args ...string) {
 	}
 }
 
-func (c *Client) createTx(receiver common.Address, amount *big.Int) (tee.Transaction, error) {
-	block := atomic.LoadUint64(&c.currentBlock) + 1
+func (c *Client) createTransfer(receiver common.Address, amount *big.Int) (tee.Transaction, error) {
+	block := atomic.LoadUint64(&c.lastBlock) + 1
 
 	tx := tee.Transaction{
 		Nonce:     c.txNonce,
@@ -252,7 +252,7 @@ func (c *Client) CmdBench(status chan *CmdStatus, args ...string) {
 	}
 	status <- &CmdStatus{Msg: fmt.Sprintf("Sending %d payments", n)}
 	result, err := Benchmark(n, func() error {
-		tx, err := c.createTx(a, amount)
+		tx, err := c.createTransfer(a, amount)
 		if err != nil {
 			return err
 		}
@@ -276,30 +276,18 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		return
 	}
 	amount := eth.EthToWeiFloat(_amount)
+	rec, err := c.sendTx("Deposit", func(opts *bind.TransactOpts) (*types.Transaction, error) {
+		opts.Value = amount
+		return c.contract.Deposit(opts)
+	}, status)
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("Deposit TX: %w", err)}
+		return
+	}
 
-	status <- &CmdStatus{Msg: "Deposit TX: Preparing"}
-	otps, err := c.ethClient.NewTransactor(txCtx())
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	otps.Value = amount
-	status <- &CmdStatus{Msg: "Deposit TX: Sending"}
-	tx, err := c.contract.Deposit(otps)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	status <- &CmdStatus{Msg: "Deposit TX: Mining"}
-	c.logOnChain("Sent deposit TX with hash %s", tx.Hash().Hex())
-	res, err := bind.WaitMined(txCtx(), c.ethClient, tx)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	c.logOnChain("Deposit TX mined in Block #%d", res.BlockNumber.Uint64())
+	c.logOnChain("Deposit TX mined in Block #%d", rec.BlockNumber.Uint64())
 	status <- &CmdStatus{Msg: "Deposit proof: Waiting for Operator"}
-	blockNum := res.BlockNumber.Uint64()
+	blockNum := rec.BlockNumber.Uint64()
 	// The epoch that we want to do the deposit in.
 	epoch := c.params.DepositEpoch(blockNum)
 
@@ -421,16 +409,17 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 		return
 	}
 
-	status <- &CmdStatus{Msg: "Exit TX: Preparing"}
-	otps, err := c.ethClient.NewTransactor(txCtx())
+	rec, err := c.sendTx("Exit", func(opts *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Exit(opts, bindings.ErdstallBalance{Epoch: bal.Epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
+	}, status)
 	if err != nil {
-		status <- &CmdStatus{Err: err}
+		status <- &CmdStatus{Err: fmt.Errorf("Exit TX: %w", err)}
 		return
 	}
-	status <- &CmdStatus{Msg: "Exit TX: Sending"}
-	tx, err := c.contract.Exit(otps, bindings.ErdstallBalance{Epoch: bal.Epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
+	c.logOnChain("Exit mined in block #%d", rec.BlockNumber.Uint64())
+	c.withdraw(bal.Epoch, status)
+}
+
 		return
 	}
 	status <- &CmdStatus{Msg: "Exit TX: Mining"}
@@ -458,26 +447,46 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 	}
 	status <- &CmdStatus{Msg: "Withdraw TX: Preparing"}
 	otps, err = c.ethClient.NewTransactor(txCtx())
+// sendTx already checks the receipt status and returns an error
+// when it failed.
+func (c *Client) sendTx(name string, f func(*bind.TransactOpts) (*types.Transaction, error), status chan *CmdStatus) (*types.Receipt, error) {
+	status <- &CmdStatus{Msg: name + " TX: Preparing"}
+	opts, err := c.ethClient.NewTransactor(txCtx())
 	if err != nil {
+		return nil, err
+	}
+	status <- &CmdStatus{Msg: name + " TX: Sending"}
+	tx, err := f(opts)
+	if err != nil {
+		return nil, err
+	}
+	status <- &CmdStatus{Msg: name + " TX: Mining"}
+	receipt, err := bind.WaitMined(txCtx(), c.ethClient, tx)
+	if err != nil {
+		return nil, err
+	}
+	if receipt.Status == types.ReceiptStatusFailed {
+		return nil, errors.New("Receipt failed")
+	}
+	return receipt, nil
+}
+
+func (c *Client) withdraw(exitEpoch uint64, status chan *CmdStatus) {
+	// Wait for the end of the Exit epoch before sending the Withdraw TX.
+	endExitBlock := c.params.DepositStartBlock(exitEpoch + 1)
+	if err := c.ethClient.WaitForBlock(c.Ctx(), endExitBlock); err != nil {
 		status <- &CmdStatus{Err: err}
 		return
 	}
-	status <- &CmdStatus{Msg: "Withdraw TX: Sending"}
-	tx, err = c.contract.Withdraw(otps, bal.Epoch)
+
+	rec, err := c.sendTx("Withdraw", func(opts *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Withdraw(opts, exitEpoch)
+	}, status)
 	if err != nil {
-		status <- &CmdStatus{Err: err}
+		status <- &CmdStatus{Err: fmt.Errorf("Withdraw TX: %w", err)}
 		return
 	}
-	status <- &CmdStatus{Msg: "Withdraw TX: Mining"}
-	rec, err = bind.WaitMined(txCtx(), c.ethClient, tx)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	if rec.Status == types.ReceiptStatusFailed {
-		status <- &CmdStatus{Err: errors.New("Withdraw TX: Receipt failed")}
-		return
-	}
+
 	c.logOnChain("Withdraw mined in block #%d", rec.BlockNumber.Uint64())
 	c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: big.NewInt(0)}}
 	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: TRUSTED}
@@ -519,6 +528,14 @@ func (c *Client) logOnChain(format string, args ...interface{}) {
 
 func (c *Client) logOffChain(format string, args ...interface{}) {
 	c.events <- &Event{Type: CHAIN_MSG, Message: "🍵 " + fmt.Sprintf(format, args...)}
+}
+
+func (c *Client) logError(format string, args ...interface{}) {
+	c.events <- &Event{Type: CHAIN_MSG, Message: "⚠ " + fmt.Sprintf(format, args...)}
+}
+
+func (c *Client) log(format string, args ...interface{}) {
+	c.events <- &Event{Type: CHAIN_MSG, Message: fmt.Sprintf(format, args...)}
 }
 
 func (c *Client) Address() common.Address {
