@@ -490,7 +490,7 @@ func (c *Client) listenOnChain() error {
 	subError := make(chan error)
 
 	go func() {
-		subError <- c.ethClient.SubscribeToEpochs(c.Ctx(), *c.params, epochs, blocks)
+		subError <- c.ethClient.SubscribeEpochs(c.Ctx(), *c.params, epochs, blocks)
 	}()
 	go c.BalanceProofWatcher()
 

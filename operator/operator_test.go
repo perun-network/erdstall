@@ -80,7 +80,7 @@ func TestOperator(t *testing.T) {
 	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
 	// challenge response
-	sub, exitEvents := user1.SubscribeToExitEvents()
+	sub, exitEvents := user1.SubscribeExitEvents()
 	defer sub.Unsubscribe()
 	user1.Challenge()
 	onChainTransactionTimeout := time.Duration(blockTime*environment.operator.EnclaveParams().PhaseDuration) * time.Second

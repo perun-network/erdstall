@@ -53,7 +53,7 @@ func TestEnclave(t *testing.T) {
 		}
 	}
 
-	sub, err := operator.SubscribeToBlocks()
+	sub, err := operator.SubscribeBlocks()
 	requiree.NoError(err)
 	defer sub.Unsubscribe()
 	testLog("Subscribed to new blocks")

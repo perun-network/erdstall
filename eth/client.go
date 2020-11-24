@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/event"
 	log "github.com/sirupsen/logrus"
 	peruneth "perun.network/go-perun/backend/ethereum/channel"
 	perunhd "perun.network/go-perun/backend/ethereum/wallet/hd"
@@ -48,6 +49,16 @@ type (
 		blocks          chan *tee.Block
 		err             chan error
 		nextBlockNumber *big.Int
+	}
+
+	ExitingSubscription struct {
+		sub    event.Subscription
+		events chan *bindings.ErdstallExiting
+	}
+
+	FrozenSubscription struct {
+		sub    event.Subscription
+		events chan *bindings.ErdstallFrozen
 	}
 )
 
@@ -129,7 +140,7 @@ func (cl *Client) Account() accounts.Account {
 }
 
 func (cl *Client) WaitForBlock(ctx context.Context, target uint64) error {
-	sub, err := cl.SubscribeToBlocks()
+	sub, err := cl.SubscribeBlocks()
 	if err != nil {
 		return err
 	}
@@ -147,11 +158,11 @@ func (cl *Client) WaitForBlock(ctx context.Context, target uint64) error {
 	}
 }
 
-// SubscribeToEpochs writes new epochs into `sink`. Can be cancelled via ctx.
+// SubscribeEpochs writes new epochs into `sink`. Can be cancelled via ctx.
 // Should be called in a go-routine, since it blocks.
 // Future InitBlock numbers are not supported, so it will not return the 0. th epoch.
-func (cl *Client) SubscribeToEpochs(ctx context.Context, params tee.Parameters, sink chan uint64, blockSink chan uint64) error {
-	sub, err := cl.SubscribeToBlocks()
+func (cl *Client) SubscribeEpochs(ctx context.Context, params tee.Parameters, sink chan uint64, blockSink chan uint64) error {
+	sub, err := cl.SubscribeBlocks()
 	if err != nil {
 		return err
 	}
@@ -172,8 +183,8 @@ func (cl *Client) SubscribeToEpochs(ctx context.Context, params tee.Parameters, 
 	}
 }
 
-// SubscribeToBlocks subscribes the client to the mined Ethereum blocks.
-func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
+// SubscribeBlocks subscribes the client to the mined Ethereum blocks.
+func (cl *Client) SubscribeBlocks() (*BlockSubscription, error) {
 	headers := make(chan *types.Header)
 	blocks := make(chan *tee.Block)
 
@@ -232,9 +243,9 @@ func (cl *Client) SubscribeToBlocks() (*BlockSubscription, error) {
 	return &BlockSubscription{sub, blocks, quit}, nil
 }
 
-// SubscribeToBlocksStartingFrom subscribes the client to the mined Ethereum
+// SubscribeBlocksStartingFrom subscribes the client to the mined Ethereum
 // blocks starting from the given block number.
-func (cl *Client) SubscribeToBlocksStartingFrom(startBlockNumber *big.Int) (*BlockSubscription2, error) {
+func (cl *Client) SubscribeBlocksStartingFrom(startBlockNumber *big.Int) (*BlockSubscription2, error) {
 	headers := make(chan *types.Header)
 	blocks := make(chan *tee.Block)
 	errChan := make(chan error)
@@ -287,42 +298,72 @@ func (cl *Client) SubscribeToBlocksStartingFrom(startBlockNumber *big.Int) (*Blo
 	return blockSub, nil
 }
 
-// SubscribeToDeposited writes past Deposited events and newly received ones
-// into the sink. The `epochs` and `accs` arguments can be used to filter for
+// SubscribeExiting writes received Exiting events into the Subscription.
+// The `epochs` and `accs` arguments can be used to filter for
 // specific events. Passing `nil` will skip the filtering.
-// Should be started in a go-routine, since it blocks.
-// Can be cancelled via context.
-func (cl *Client) SubscribeToDeposited(ctx context.Context, contract *bindings.Erdstall, epochs []uint64, accs []common.Address, sink chan *bindings.ErdstallDeposited) error {
+// Can be cancelled via Unsubscribe.
+func (cl *Client) SubscribeExiting(ctx context.Context, contract *bindings.Erdstall, epochs []uint64, accs []common.Address) (*ExitingSubscription, error) {
 	// sub to new events
 	wOpts, err := cl.NewWatchOpts(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	sub, err := contract.WatchDeposited(wOpts, sink, epochs, accs)
+	events := make(chan *bindings.ErdstallExiting)
+	sub, err := contract.WatchExiting(wOpts, events, epochs, accs)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer sub.Unsubscribe()
-	// filter past events
-	fOpts, err := cl.NewFilterOpts(ctx)
+
+	return &ExitingSubscription{
+		sub:    sub,
+		events: events,
+	}, nil
+}
+
+func (s *ExitingSubscription) Events() <-chan *bindings.ErdstallExiting {
+	return s.events
+}
+
+func (s *ExitingSubscription) Err() <-chan error {
+	return s.sub.Err()
+}
+
+func (s *ExitingSubscription) Unsubscribe() {
+	s.sub.Unsubscribe()
+}
+
+// SubscribeFrozen writes received Frozen events into the Subscription.
+// The `epochs` argument can be used to filter for
+// specific events. Passing `nil` will skip the filtering.
+// Can be cancelled via Unsubscribe.
+func (cl *Client) SubscribeFrozen(ctx context.Context, contract *bindings.Erdstall, epochs []uint64) (*FrozenSubscription, error) {
+	// sub to new events
+	wOpts, err := cl.NewWatchOpts(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	it, err := contract.FilterDeposited(fOpts, epochs, accs)
-	defer it.Close() // nolint: staticcheck
+	events := make(chan *bindings.ErdstallFrozen)
+	sub, err := contract.WatchFrozen(wOpts, events, epochs)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for it.Next() {
-		sink <- it.Event
-	}
-	// Wait for error or ctx done.
-	select {
-	case err := <-sub.Err():
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+
+	return &FrozenSubscription{
+		sub:    sub,
+		events: events,
+	}, nil
+}
+
+func (s *FrozenSubscription) Events() <-chan *bindings.ErdstallFrozen {
+	return s.events
+}
+
+func (s *FrozenSubscription) Err() <-chan error {
+	return s.sub.Err()
+}
+
+func (s *FrozenSubscription) Unsubscribe() {
+	s.sub.Unsubscribe()
 }
 
 // BlockByHash returns the block for the given block hash together with the block's transaction receipts.
