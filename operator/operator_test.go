@@ -220,7 +220,7 @@ func (e *environment) Shutdown() {
 func newDefaultConfig() *Config {
 	return &Config{
 		"ws://127.0.0.1:8545",
-		"tag volcano eight thank tide danger coast health above argue embrace heavy",
+		"pistol kiwi shrug future ozone ostrich match remove crucial oblige cream critic",
 		"m/44'/60'/0'/0/0",
 		"m/44'/60'/0'/0/1",
 		3,

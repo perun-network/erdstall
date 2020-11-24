@@ -161,7 +161,7 @@ func (c *Client) Run() error {
 	}
 	c.logOnChain("Connected to contract")
 	c.events <- &Event{Type: SET_PARAMS, Params: *params}
-	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: TRUSTED}
+	c.setOpTrust(TRUSTED)
 
 	c.params = params
 	c.contract = contract
@@ -305,7 +305,7 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		}
 	}()
 	go func() {
-		depEndBlock := c.params.DepositEndBlock(epoch)
+		depEndBlock := c.params.DepositDoneBlock(epoch)
 		err := c.ethClient.WaitForBlock(ctx, depEndBlock) // Add PowDepth here if needed
 		if err == nil {
 			c.logOffChain("Deposit Phase for Epoch %d ended in block %d", epoch, depEndBlock)
@@ -318,20 +318,20 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		if e != nil {
 			c.logOffChain("WaitForEpoch: %s", e.Error())
 			status <- &CmdStatus{War: "Deposit proof: Chain error - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+			c.setOpTrust(UNKNOWN)
 		} else {
 			status <- &CmdStatus{War: "Deposit proof: Operator timed out - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+			c.setOpTrust(UNTRUSTED)
 		}
 	case p := <-proof:
 		status <- &CmdStatus{Msg: "Deposit proof: Verifying"}
 		ok, err := tee.VerifyDepositProof(*c.params, p)
 		if !ok || err != nil {
 			status <- &CmdStatus{War: "Deposit proof: Invalid Signature - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+			c.setOpTrust(UNTRUSTED)
 		} else if p.Balance.Value.Cmp(amount) != 0 || p.Balance.Epoch != epoch || p.Balance.Account != c.Address() {
 			status <- &CmdStatus{War: "Deposit proof: Wrong Proof - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+			c.setOpTrust(UNTRUSTED)
 		} else {
 			c.balMtx.Lock()
 			defer c.balMtx.Unlock()
@@ -345,10 +345,10 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		}
 	case e := <-proofErr:
 		status <- &CmdStatus{War: fmt.Sprintf("Deposit proof: '%s' - resuming protocol", e.Error())}
-		c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+		c.setOpTrust(UNKNOWN)
 	case <-ctx.Done():
 		status <- &CmdStatus{War: "Deposit proof: Operator timed out - resuming protocol"}
-		c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+		c.setOpTrust(UNKNOWN)
 	}
 	// TODO challenge
 	status <- &CmdStatus{Err: errors.New("TODO challenge")}
@@ -364,7 +364,7 @@ func (c *Client) BalanceProofWatcher() {
 		proof, err := c.conn.GetBalanceProof(c.Ctx(), c.Address())
 		if err != nil {
 			c.logProof("Balance Proof error: %v", err)
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+			c.setOpTrust(UNKNOWN)
 		} else if proof.Balance.Epoch > oldEpoch {
 			c.logProof("Got Balance Proof for %v ETH in epoch %d", eth.WeiToEthFloat(proof.Balance.Value), proof.Balance.Epoch)
 			oldEpoch = proof.Balance.Epoch
@@ -374,13 +374,13 @@ func (c *Client) BalanceProofWatcher() {
 
 			ok, err := tee.VerifyBalanceProof(*c.params, proof)
 			if !ok || err != nil {
-				c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+				c.setOpTrust(UNKNOWN)
 				c.logProof("Invalid balance proof: err=%v ok=%t", err, ok)
 				return
 			}
 
 			c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: new(big.Int).Set(proof.Balance.Value)}}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: TRUSTED}
+			c.setOpTrust(TRUSTED)
 		}
 		time.Sleep(time.Second)
 	}
@@ -409,7 +409,7 @@ func (c *Client) FrozenWatcher() {
 
 func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 	epoch := event.Epoch
-	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+	c.setOpTrust(UNTRUSTED)
 	c.log("❄️ Contract Frozen in epoch #%d", epoch)
 
 	c.balMtx.Lock()
@@ -443,7 +443,7 @@ func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 func (c *Client) lastBal() *EpochBalance {
 	c.balMtx.Lock()
 	defer c.balMtx.Unlock()
-	epoch := c.params.ExitEpoch(atomic.LoadUint64(&c.currentBlock))
+	epoch := c.params.ExitEpoch(atomic.LoadUint64(&c.lastBlock))
 	bal, ok := c.balances[epoch]
 	if !ok || bal.Bal == nil || bal.Bal.Sig == nil {
 		return nil
@@ -583,7 +583,7 @@ func (c *Client) withdraw(exitEpoch uint64, status chan *CmdStatus) {
 
 	c.logOnChain("Withdraw mined in block #%d", rec.BlockNumber.Uint64())
 	c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: big.NewInt(0)}}
-	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: TRUSTED}
+	c.setOpTrust(TRUSTED)
 }
 
 // writes to chainVvents
@@ -603,7 +603,7 @@ func (c *Client) listenOnChain() error {
 		case epoch := <-epochs:
 			c.events <- &Event{Type: NEW_EPOCH, EpochNum: epoch}
 		case block := <-blocks:
-			atomic.StoreUint64(&c.currentBlock, block)
+			atomic.StoreUint64(&c.lastBlock, block)
 			c.events <- &Event{Type: NEW_BLOCK, BlockNum: block}
 		case err := <-subError:
 			return err
@@ -631,6 +631,10 @@ func (c *Client) logError(format string, args ...interface{}) {
 
 func (c *Client) log(format string, args ...interface{}) {
 	c.events <- &Event{Type: CHAIN_MSG, Message: fmt.Sprintf(format, args...)}
+}
+
+func (c *Client) setOpTrust(trust Trust) {
+	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: trust}
 }
 
 func (c *Client) Address() common.Address {

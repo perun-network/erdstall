@@ -116,10 +116,7 @@ func (gui *GUI) enter(v *gocui.View) error {
 			bar := gui.bars.Add(input)
 			for s := range status {
 				if s == nil {
-					bar.Finish(color("Done", GREEN))
-					gui.logOut("✓ ", color(input, GREEN), "\n")
-					gui.bars.Render()
-					return
+					break
 				}
 				if s.Err != nil {
 					bar.Finish(color("Error", RED))
@@ -134,6 +131,9 @@ func (gui *GUI) enter(v *gocui.View) error {
 					gui.bars.Render()
 				}
 			}
+			bar.Finish(color("Done", GREEN))
+			gui.logOut("✓ ", color(input, GREEN), "\n")
+			gui.bars.Render()
 		}
 	}()
 
