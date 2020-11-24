@@ -156,6 +156,8 @@ func (gui *GUI) eval(input string) (chan *client.CmdStatus, error) {
 		go gui.client.CmdSend(status, fs[1:]...)
 	case "bench":
 		go gui.client.CmdBench(status, fs[1:]...)
+	case "challenge":
+		go gui.client.CmdChallenge(status, fs[1:]...)
 	case "leave":
 		go gui.client.CmdLeave(status, fs[1:]...)
 	case "exit":

@@ -474,33 +474,73 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 	c.withdraw(bal.Epoch, status)
 }
 
+func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
+	defer close(status)
+	if len(args) != 0 {
+		status <- &CmdStatus{Err: errors.New("Command 'challenge' does not accept arguments.")}
 		return
 	}
-	status <- &CmdStatus{Msg: "Exit TX: Mining"}
-	rec, err := bind.WaitMined(txCtx(), c.ethClient, tx)
+
+	// Wait for the next epoch, when we are currently in the response phase.
+	lastBlock := atomic.LoadUint64(&c.lastBlock)
+	if c.params.IsChallengeResponsePhase(lastBlock + 1) {
+		status <- &CmdStatus{Msg: "Waiting for next epoch"}
+		next := c.params.DepositDoneBlock(c.params.ExitEpoch(lastBlock + 1))
+		if err := c.ethClient.WaitForBlock(c.Ctx(), next); err != nil {
+			status <- &CmdStatus{Err: err}
+			return
+		}
+	}
+
+	tx, err := c.sendTx("Challenge", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Challenge(auth)
+	}, status)
 	if err != nil {
-		status <- &CmdStatus{Err: err}
+		status <- &CmdStatus{Err: fmt.Errorf("Challenge TX: %w", err)}
 		return
 	}
-	if rec.Status == types.ReceiptStatusFailed {
-		status <- &CmdStatus{Err: errors.New("Exit TX: Receipt failed")}
-		/*reason, err := errorReason(c.Ctx(), &c.ethClient.ContractBackend, tx, rec.BlockNumber, c.ethClient.Account())
+
+	// Wait for the operator til the end of the epoch and Freeze otherwise.
+	status <- &CmdStatus{Msg: "Exiting event: Waiting"}
+	subCtx, cancel := context.WithCancel(c.Ctx())
+	defer cancel()
+	exitEpoch := c.params.ExitEpoch(tx.BlockNumber.Uint64())
+	sub, err := c.ethClient.SubscribeExiting(subCtx, c.contract, []uint64{exitEpoch}, []common.Address{c.Address()})
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("Exiting subscription: %w", err)}
+		return
+	}
+	defer sub.Unsubscribe()
+
+	done := make(chan struct{})
+	go func() {
+		next := c.params.DepositDoneBlock(c.params.DepositEpoch(tx.BlockNumber.Uint64()))
+		c.ethClient.WaitForBlock(subCtx, next) // nolint: errcheck
+		close(done)
+	}()
+
+	select {
+	case <-done: // ChallengeReponse phase is over, freeze.
+		c.log("❄️ Freezing Contract")
+		_, err := c.sendTx("Freeze", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			return c.contract.Freeze(auth)
+		}, status)
 		if err != nil {
-			c.logOnChain("Unknown revert reason: %v", err)
-		} else {
-			c.logOnChain("Exit TX revert reason: %s", reason)
-		}*/
+			status <- &CmdStatus{Err: fmt.Errorf("Freezing TX: %w", err)}
+			return
+		}
+		// The FrozenWatcher will handle the withdrawal from hereon.
+	case err := <-sub.Err():
+		if err != nil {
+			c.logError("Exiting subscription: %v", err)
+		}
 		return
+	case <-sub.Events(): // Challenge was posted on-chain by OP.
+		c.logOnChain("Received on-chain challenge response")
+		c.withdraw(exitEpoch, status)
 	}
-	c.logOnChain("Exit mined in block #%d", rec.BlockNumber.Uint64())
-	// Wait for the end of the Exit epoch before sending the Withdraw TX.
-	endExitBlock := c.params.EpochStartBlock(c.params.ExitEpoch(rec.BlockNumber.Uint64()) + 1)
-	if err := c.ethClient.WaitForBlock(c.Ctx(), endExitBlock); err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	status <- &CmdStatus{Msg: "Withdraw TX: Preparing"}
-	otps, err = c.ethClient.NewTransactor(txCtx())
+}
+
 // sendTx already checks the receipt status and returns an error
 // when it failed.
 func (c *Client) sendTx(name string, f func(*bind.TransactOpts) (*types.Transaction, error), status chan *CmdStatus) (*types.Receipt, error) {
