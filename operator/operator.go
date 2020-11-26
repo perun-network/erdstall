@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package operator
 
 import (
@@ -5,9 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net"
-	"net/http"
-	"net/rpc"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -29,6 +28,7 @@ type Operator struct {
 	ethClient *eth.Client
 	*depositProofs
 	*balanceProofs
+	rpcOperator       *RPCOperator
 	contract          *bindings.Erdstall
 	respondChallenges bool
 }
@@ -125,6 +125,14 @@ func (operator *Operator) Serve(port uint16) error {
 	errGo("Enclave.Run", func() error { return operator.enclave.Run(operator.params) })
 	log.Info("Operator.Serve: Enclave running")
 
+	operator.rpcOperator = NewRPCOperator(operator.enclave)
+	// Handle RPC
+	errGo("Op.RPCServe", func() error {
+		rpc := NewRPC(operator.rpcOperator)
+		return rpc.Serve("0.0.0.0", port)
+	})
+	log.Info("Operator.Serve: RPC handling started")
+
 	// Handle Ethereum blocks
 	errGo("Op.BlockSub", operator.handleBlocks)
 	log.Info("Operator.Serve: Block subcription started")
@@ -140,10 +148,6 @@ func (operator *Operator) Serve(port uint16) error {
 	// Handle balance proofs
 	errGo("Op.BalanceProofs", operator.handleBalanceProofs)
 	log.Info("Operator.Serve: Balance proof handling started")
-
-	// Handle RPC
-	errGo("Op.RPCServe", func() error { return operator.handleRPC(port) })
-	log.Info("Operator.Serve: RPC handling started")
 
 	return errg.Wait()
 }
@@ -255,6 +259,9 @@ func (operator *Operator) handleDepositProofs() error {
 			log.Debugf("Operator.Serve: Retrieved %d deposit proofs", len(dps))
 		}
 		operator.depositProofs.AddAll(dps)
+		for _, dp := range dps {
+			operator.rpcOperator.PushDepositProof(*dp)
+		}
 	}
 }
 
@@ -268,21 +275,10 @@ func (operator *Operator) handleBalanceProofs() error {
 			log.Debugf("Operator.Serve: Retrieved %d balance proofs", len(bps))
 		}
 		operator.balanceProofs.AddAll(bps)
+		for _, bp := range bps {
+			operator.rpcOperator.PushBalanceProof(*bp)
+		}
 	}
-}
-
-func (operator *Operator) handleRPC(port int) error {
-	remoteEnclave := newRemoteEnclave(operator)
-	if err := rpc.Register(remoteEnclave); err != nil {
-		return fmt.Errorf("registering remote enclave interface: %w", err)
-	}
-	rpc.HandleHTTP()
-
-	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		return fmt.Errorf("binding to socket: %w", err)
-	}
-	return http.Serve(l, nil)
 }
 
 // AssertNoError logs the error and exits if the error is not nil.
