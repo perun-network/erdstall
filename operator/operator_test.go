@@ -140,7 +140,7 @@ func initEnvironment(t *testing.T) *environment {
 	params := operator.EnclaveParams()
 	log.Info("operator_test.initEnvironment: Created operator")
 	errg.Go(func() error {
-		return operator.Serve(cfg.Port)
+		return operator.Serve(cfg.RPCPort)
 	})
 	time.Sleep(1 * time.Second)
 
@@ -157,10 +157,8 @@ func initEnvironment(t *testing.T) *environment {
 	userAccount1 := createUserAccount(1)
 	userAccount2 := createUserAccount(2)
 
-	rpcURL := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
-
-	user1 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount1, rpcURL, params.Contract, params)
-	user2 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount2, rpcURL, params.Contract, params)
+	user1 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount1, cfg.RPCHost, cfg.RPCPort, params.Contract, params)
+	user2 := test.CreateUser(t, cfg.EthereumNodeURL, w, userAccount2, cfg.RPCHost, cfg.RPCPort, params.Contract, params)
 
 	log.Info("operator_test.initEnvironment: Created users")
 
@@ -226,7 +224,8 @@ func newDefaultConfig() *Config {
 		3,
 		1,
 		0,
-		8080,
+		8401,
+		"0.0.0.0",
 		true,
 	}
 }

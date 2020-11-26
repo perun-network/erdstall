@@ -6,6 +6,7 @@
 	"PhaseDuration": 3,
 	"ResponseDuration": 1,
 	"PowDepth": 0,
-	"Port": 8080,
+	"RpcPort": 8401,
+	"RpcHost": "0.0.0.0",
 	"RespondChallenges": true
 }

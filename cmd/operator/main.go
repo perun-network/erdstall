@@ -24,6 +24,6 @@ func main() {
 	log.SetLevel(lvl)
 
 	_operator := operator.Setup(cfg)
-	err = _operator.Serve(cfg.Port)
+	err = _operator.Serve(cfg.RPCPort)
 	operator.AssertNoError(err)
 }

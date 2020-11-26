@@ -108,7 +108,7 @@ func Setup(cfg *Config) *Operator {
 }
 
 // Serve starts the operator's main routine.
-func (operator *Operator) Serve(port int) error {
+func (operator *Operator) Serve(port uint16) error {
 	// Handle errors, print them as they occurr
 	errg := perrors.NewGatherer()
 	errGo := func(name string, fn func() error) {
