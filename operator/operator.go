@@ -25,7 +25,7 @@ import (
 type Operator struct {
 	enclave   tee.Enclave
 	params    tee.Parameters
-	ethClient *eth.Client
+	EthClient *eth.Client
 	*depositProofs
 	*balanceProofs
 	rpcOperator       *RPCOperator
@@ -57,7 +57,7 @@ func New(
 	return &Operator{
 		enclave:           enclave,
 		params:            params,
-		ethClient:         client,
+		EthClient:         client,
 		depositProofs:     newDepositProofs(),
 		balanceProofs:     newBalanceProofs(),
 		contract:          _contract,
@@ -157,7 +157,7 @@ func (operator *Operator) handleBlocks() error {
 	if err != nil {
 		return fmt.Errorf("reading BigBang: %w", err)
 	}
-	blockSub, err := operator.ethClient.SubscribeBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
+	blockSub, err := operator.EthClient.SubscribeBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
 	if err != nil {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}
@@ -206,7 +206,7 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 	ctx, cancel := createDefaultContext()
 	defer cancel()
 
-	tr, err := operator.ethClient.NewTransactor(ctx)
+	tr, err := operator.EthClient.NewTransactor(ctx)
 	if err != nil {
 		return fmt.Errorf("creating transactor: %w", err)
 	}
@@ -232,7 +232,7 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 		ctx, cancel := createOnChainContext()
 		defer cancel()
 
-		r, err := bind.WaitMined(ctx, operator.ethClient.ContractBackend, tx)
+		r, err := bind.WaitMined(ctx, operator.EthClient.ContractBackend, tx)
 		if err != nil {
 			log.Errorf("Operator.handleChallengedEvent: Failed to wait for mining of response to challenge %v: %v", c, err)
 			return

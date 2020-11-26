@@ -1,4 +1,6 @@
-package operator
+// SPDX-License-Identifier: Apache-2.0
+
+package operator_test
 
 import (
 	"context"
@@ -14,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 
+	op "github.com/perun-network/erdstall/operator"
 	"github.com/perun-network/erdstall/operator/test"
 	"github.com/perun-network/erdstall/tee"
 )
@@ -21,12 +24,14 @@ import (
 func TestOperator(t *testing.T) {
 	environment := initEnvironment(t)
 	t.Cleanup(environment.Shutdown)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	errg := environment.errg
 	user1 := environment.user1
 	user2 := environment.user2
 
-	AssertNoError(errg.Err())
+	op.AssertNoError(errg.Err())
 
 	user1.TargetBalance = int64(10)
 	user2.TargetBalance = int64(5)
@@ -41,42 +46,42 @@ func TestOperator(t *testing.T) {
 	environment.WaitBlocks(1)
 
 	// get deposit proofs
-	user1.DepositProof()
-	user2.DepositProof()
+	user1.DepositProof(ctx)
+	user2.DepositProof(ctx)
 	log.Info("operator_test.TestOperator: Retrieved deposit proofs")
 
 	// transfer from user1 to user2
-	user1.Transfer(user2, 3)
+	user1.Transfer(ctx, user2, 3)
 	log.Info("operator_test.TestOperator: Transfer from user1 to user2")
 
 	environment.WaitPhase()
 
 	// get balance proof
-	user1.BalanceProof()
-	user2.BalanceProof()
+	user1.BalanceProof(ctx)
+	user2.BalanceProof(ctx)
 	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
 	// transfer from user2 to user1
-	user2.Transfer(user1, 2)
+	user2.Transfer(ctx, user1, 2)
 	log.Info("operator_test.TestOperator: Transfer from user2 to user1")
 
 	environment.WaitPhase()
 
 	// get balance proof
-	user1.BalanceProof()
-	user2.BalanceProof()
+	user1.BalanceProof(ctx)
+	user2.BalanceProof(ctx)
 	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
 	// transfer from user1 to user2 and transfer from user2 to user1
-	user1.Transfer(user2, 1)
-	user2.Transfer(user1, 1)
+	user1.Transfer(ctx, user2, 1)
+	user2.Transfer(ctx, user1, 1)
 	log.Info("operator_test.TestOperator: Transfer from user1 to user2 and transfer from user2 to user1")
 
 	environment.WaitPhase()
 
 	// get balance proofs
-	user1.BalanceProof()
-	user2.BalanceProof()
+	user1.BalanceProof(ctx)
+	user2.BalanceProof(ctx)
 	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
 	// challenge response
@@ -107,9 +112,9 @@ func TestOperator(t *testing.T) {
 
 type environment struct {
 	*testing.T
-	cfg               *Config
+	cfg               *op.Config
 	cmd               *exec.Cmd
-	operator          *Operator
+	operator          *op.Operator
 	user1             *test.User
 	user2             *test.User
 	errg              *errors.Gatherer
@@ -123,7 +128,7 @@ func initEnvironment(t *testing.T) *environment {
 
 	cfg := newDefaultConfig()
 
-	prog, args := ganacheCommand()
+	prog, args := op.GanacheCommand()
 	args = append(args,
 		"--accounts=10",
 		"--defaultBalanceEther=100",
@@ -136,7 +141,7 @@ func initEnvironment(t *testing.T) *environment {
 		log.Fatal(err)
 	}
 
-	operator := Setup(cfg)
+	operator := op.Setup(cfg)
 	params := operator.EnclaveParams()
 	log.Info("operator_test.initEnvironment: Created operator")
 	errg.Go(func() error {
@@ -145,12 +150,12 @@ func initEnvironment(t *testing.T) *environment {
 	time.Sleep(1 * time.Second)
 
 	w, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
-	AssertNoError(err)
+	op.AssertNoError(err)
 
 	createUserAccount := func(userIndex int) accounts.Account {
 		derivationPathUser := hdwallet.MustParseDerivationPath(fmt.Sprintf("m/44'/60'/0'/0/%d", 2+userIndex))
 		userAccount, err := w.Derive(derivationPathUser, true)
-		AssertNoError(err)
+		op.AssertNoError(err)
 		return userAccount
 	}
 
@@ -186,7 +191,7 @@ func (e *environment) WaitBlocks(n int) {
 
 func (e *environment) WaitBlockPredicate(ctx context.Context, p func(uint64) bool) {
 	heads := make(chan *types.Header)
-	sub, err := e.operator.ethClient.SubscribeNewHead(ctx, heads)
+	sub, err := e.operator.EthClient.SubscribeNewHead(ctx, heads)
 	if err != nil {
 		e.T.Fatal("subscribing to header: ", err)
 	}
@@ -215,8 +220,8 @@ func (e *environment) Shutdown() {
 	}
 }
 
-func newDefaultConfig() *Config {
-	return &Config{
+func newDefaultConfig() *op.Config {
+	return &op.Config{
 		"ws://127.0.0.1:8545",
 		"pistol kiwi shrug future ozone ostrich match remove crucial oblige cream critic",
 		"m/44'/60'/0'/0/0",
