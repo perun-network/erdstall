@@ -33,6 +33,7 @@ type Client struct {
 	// Initialized in NewClient
 	Config       config.ClientConfig
 	conn         *RPC
+	proofSub     *Subscription
 	ethClient    *eth.Client
 	contractAddr common.Address
 	signer       tee.TextSigner
@@ -165,6 +166,10 @@ func (c *Client) Run() error {
 
 	c.params = params
 	c.contract = contract
+	c.proofSub, err = c.conn.Subscribe(newCtx(5*time.Second), c.Address())
+	if err != nil {
+		return fmt.Errorf("subscribing to proofs: %w", err)
+	}
 	return c.listenOnChain()
 }
 
@@ -195,7 +200,7 @@ func (c *Client) CmdSend(status chan *CmdStatus, args ...string) {
 		return
 	}
 	status <- &CmdStatus{Msg: "Forwarding to Operator"}
-	if err := c.conn.AddTX(shortCtx(), tx); err != nil {
+	if err := c.conn.SendTx(shortCtx(), tx); err != nil {
 		status <- &CmdStatus{Err: err}
 	}
 }
@@ -256,7 +261,7 @@ func (c *Client) CmdBench(status chan *CmdStatus, args ...string) {
 		if err != nil {
 			return err
 		}
-		return c.conn.AddTX(shortCtx(), tx)
+		return c.conn.SendTx(shortCtx(), tx)
 	})
 	c.events <- &Event{Type: BENCH, Result: result}
 	if err != nil {
@@ -298,8 +303,12 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 	ctx, cancel := context.WithCancel(c.Ctx())
 	defer cancel()
 	go func() {
-		if p, err := c.conn.GetDepositProof(ctx, epoch, c.Address()); err != nil {
-			proofErr <- err
+		if p, err := c.proofSub.DepositProof(ctx); err != nil {
+			if p.Balance.Epoch != epoch {
+				proofErr <- fmt.Errorf("Got proof for wrong epoch #%d", p.Balance.Epoch)
+			} else {
+				proofErr <- err
+			}
 		} else {
 			proof <- p
 		}
@@ -361,7 +370,7 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 func (c *Client) BalanceProofWatcher() {
 	oldEpoch := uint64(0)
 	for {
-		proof, err := c.conn.GetBalanceProof(c.Ctx(), c.Address())
+		proof, err := c.proofSub.BalanceProof(c.Ctx())
 		if err != nil {
 			c.logProof("Balance Proof error: %v", err)
 			c.setOpTrust(UNKNOWN)

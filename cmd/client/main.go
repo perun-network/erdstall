@@ -26,7 +26,10 @@ func main() {
 	events := make(chan *client.Event, 10) // GUI event pipe
 
 	cb := perunchannel.NewContractBackend(eb, perunhd.NewTransactor(wallet.Wallet.Wallet()))
-	rpc := client.NewRPC("127.0.0.1", 8080)                     // Operator conn
+	rpc, err := client.NewRPC(cfg.OpHost, uint16(cfg.OpPort))
+	if err != nil {
+		log.WithError(err).Panicf("Connecting to the operator failed.")
+	}
 	chain := eth.NewClient(cb, wallet.Acc.Account)              // ETHChain conn
 	client := client.NewClient(cfg, rpc, events, chain, wallet) // Erdstall protocol client
 	go gui.RunGui(client, events)                               // Run the GUI
