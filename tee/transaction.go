@@ -6,11 +6,27 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
+
+// Transaction is a payment transaction from Sender to Recipient, signed by
+// the Sender. The epoch must match the current transaction epoch.
+//
+// Nonce tracking allows to send multiple transactions per epoch, each only
+// stating the amount of the individual transaction.
+type Transaction struct {
+	Nonce     uint64         `json:"nonce"` // starts at 0, each tx must increase by one, across epochs
+	Epoch     Epoch          `json:"epoch"`
+	Sender    common.Address `json:"sender"`
+	Recipient common.Address `json:"recipient"`
+	Amount    *big.Int       `json:"amount"`
+	Sig       Sig            `json:"sig"`
+	hash      common.Hash
+}
 
 // Hash hashes a transaction.
 func (t *Transaction) Hash() common.Hash {
