@@ -136,7 +136,7 @@ func initEnvironment(t *testing.T) *environment {
 		log.Fatal(err)
 	}
 
-	operator := Setup(cfg)
+	operator := Setup(*cfg)
 	params := operator.EnclaveParams()
 	log.Info("operator_test.initEnvironment: Created operator")
 	errg.Go(func() error {
@@ -227,6 +227,8 @@ func newDefaultConfig() *Config {
 		1,
 		0,
 		8080,
+		true,
+		true,
 		true,
 	}
 }

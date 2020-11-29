@@ -7,5 +7,7 @@
 	"ResponseDuration": 1,
 	"PowDepth": 0,
 	"Port": 8080,
-	"RespondChallenges": true
+	"RespondChallenges": true,
+	"SendDepositProofs": true,
+	"SendBalanceProofs": true
 }

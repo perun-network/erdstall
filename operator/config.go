@@ -20,6 +20,8 @@ type Config struct {
 	PowDepth               uint64
 	Port                   int
 	RespondChallenges      bool
+	SendDepositProofs      bool
+	SendBalanceProofs      bool
 }
 
 // dialTimeout will be used a timeout when dialing to the ethereum node.
