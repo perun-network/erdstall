@@ -1,7 +1,7 @@
 # Usage
 
 ```sh
-$ ganache-cli --mnemonic="tag volcano eight thank tide danger coast health above argue embrace heavy"
+$ ganache-cli --mnemonic="pistol kiwi shrug future ozone ostrich match remove crucial oblige cream critic"
 $ go run . --config config.json
 ```
 

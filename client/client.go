@@ -39,10 +39,10 @@ type Client struct {
 	txNonce      uint64
 	balances     map[uint64]EpochBalance // epoch => balance
 	// Initialized in Run()
-	currentBlock uint64 // Atomic
-	contract     *bindings.Erdstall
-	params       *tee.Parameters
-	events       chan *Event
+	lastBlock uint64 // Atomic
+	contract  *bindings.Erdstall
+	params    *tee.Parameters
+	events    chan *Event
 	// balMtx protects balances.
 	balMtx sync.Mutex
 }
@@ -161,7 +161,7 @@ func (c *Client) Run() error {
 	}
 	c.logOnChain("Connected to contract")
 	c.events <- &Event{Type: SET_PARAMS, Params: *params}
-	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: TRUSTED}
+	c.setOpTrust(TRUSTED)
 
 	c.params = params
 	c.contract = contract
@@ -189,7 +189,7 @@ func (c *Client) CmdSend(status chan *CmdStatus, args ...string) {
 	}
 	amount := eth.EthToWeiFloat(_amount)
 	status <- &CmdStatus{Msg: "Creating Message"}
-	tx, err := c.createTx(receiver, amount)
+	tx, err := c.createTransfer(receiver, amount)
 	if err != nil {
 		status <- &CmdStatus{Err: err}
 		return
@@ -200,8 +200,8 @@ func (c *Client) CmdSend(status chan *CmdStatus, args ...string) {
 	}
 }
 
-func (c *Client) createTx(receiver common.Address, amount *big.Int) (tee.Transaction, error) {
-	block := atomic.LoadUint64(&c.currentBlock) + 1
+func (c *Client) createTransfer(receiver common.Address, amount *big.Int) (tee.Transaction, error) {
+	block := atomic.LoadUint64(&c.lastBlock) + 1
 
 	tx := tee.Transaction{
 		Nonce:     c.txNonce,
@@ -252,7 +252,7 @@ func (c *Client) CmdBench(status chan *CmdStatus, args ...string) {
 	}
 	status <- &CmdStatus{Msg: fmt.Sprintf("Sending %d payments", n)}
 	result, err := Benchmark(n, func() error {
-		tx, err := c.createTx(a, amount)
+		tx, err := c.createTransfer(a, amount)
 		if err != nil {
 			return err
 		}
@@ -276,30 +276,18 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		return
 	}
 	amount := eth.EthToWeiFloat(_amount)
+	rec, err := c.sendTx("Deposit", func(opts *bind.TransactOpts) (*types.Transaction, error) {
+		opts.Value = amount
+		return c.contract.Deposit(opts)
+	}, status)
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("Deposit TX: %w", err)}
+		return
+	}
 
-	status <- &CmdStatus{Msg: "Deposit TX: Preparing"}
-	otps, err := c.ethClient.NewTransactor(txCtx())
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	otps.Value = amount
-	status <- &CmdStatus{Msg: "Deposit TX: Sending"}
-	tx, err := c.contract.Deposit(otps)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	status <- &CmdStatus{Msg: "Deposit TX: Mining"}
-	c.logOnChain("Sent deposit TX with hash %s", tx.Hash().Hex())
-	res, err := bind.WaitMined(txCtx(), c.ethClient, tx)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	c.logOnChain("Deposit TX mined in Block #%d", res.BlockNumber.Uint64())
+	c.logOnChain("Deposit TX mined in Block #%d", rec.BlockNumber.Uint64())
 	status <- &CmdStatus{Msg: "Deposit proof: Waiting for Operator"}
-	blockNum := res.BlockNumber.Uint64()
+	blockNum := rec.BlockNumber.Uint64()
 	// The epoch that we want to do the deposit in.
 	epoch := c.params.DepositEpoch(blockNum)
 
@@ -317,7 +305,7 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		}
 	}()
 	go func() {
-		depEndBlock := c.params.DepositEndBlock(epoch)
+		depEndBlock := c.params.DepositDoneBlock(epoch)
 		err := c.ethClient.WaitForBlock(ctx, depEndBlock) // Add PowDepth here if needed
 		if err == nil {
 			c.logOffChain("Deposit Phase for Epoch %d ended in block %d", epoch, depEndBlock)
@@ -330,20 +318,20 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		if e != nil {
 			c.logOffChain("WaitForEpoch: %s", e.Error())
 			status <- &CmdStatus{War: "Deposit proof: Chain error - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+			c.setOpTrust(UNKNOWN)
 		} else {
 			status <- &CmdStatus{War: "Deposit proof: Operator timed out - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+			c.setOpTrust(UNTRUSTED)
 		}
 	case p := <-proof:
 		status <- &CmdStatus{Msg: "Deposit proof: Verifying"}
 		ok, err := tee.VerifyDepositProof(*c.params, p)
 		if !ok || err != nil {
 			status <- &CmdStatus{War: "Deposit proof: Invalid Signature - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+			c.setOpTrust(UNTRUSTED)
 		} else if p.Balance.Value.Cmp(amount) != 0 || p.Balance.Epoch != epoch || p.Balance.Account != c.Address() {
 			status <- &CmdStatus{War: "Deposit proof: Wrong Proof - resuming protocol"}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNTRUSTED}
+			c.setOpTrust(UNTRUSTED)
 		} else {
 			c.balMtx.Lock()
 			defer c.balMtx.Unlock()
@@ -357,10 +345,10 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		}
 	case e := <-proofErr:
 		status <- &CmdStatus{War: fmt.Sprintf("Deposit proof: '%s' - resuming protocol", e.Error())}
-		c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+		c.setOpTrust(UNKNOWN)
 	case <-ctx.Done():
 		status <- &CmdStatus{War: "Deposit proof: Operator timed out - resuming protocol"}
-		c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+		c.setOpTrust(UNKNOWN)
 	}
 	// TODO challenge
 	status <- &CmdStatus{Err: errors.New("TODO challenge")}
@@ -376,7 +364,7 @@ func (c *Client) BalanceProofWatcher() {
 		proof, err := c.conn.GetBalanceProof(c.Ctx(), c.Address())
 		if err != nil {
 			c.logProof("Balance Proof error: %v", err)
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+			c.setOpTrust(UNKNOWN)
 		} else if proof.Balance.Epoch > oldEpoch {
 			c.logProof("Got Balance Proof for %v ETH in epoch %d", eth.WeiToEthFloat(proof.Balance.Value), proof.Balance.Epoch)
 			oldEpoch = proof.Balance.Epoch
@@ -386,22 +374,76 @@ func (c *Client) BalanceProofWatcher() {
 
 			ok, err := tee.VerifyBalanceProof(*c.params, proof)
 			if !ok || err != nil {
-				c.events <- &Event{Type: SET_OP_TRUST, OpTrust: UNKNOWN}
+				c.setOpTrust(UNKNOWN)
 				c.logProof("Invalid balance proof: err=%v ok=%t", err, ok)
 				return
 			}
 
 			c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: new(big.Int).Set(proof.Balance.Value)}}
-			c.events <- &Event{Type: SET_OP_TRUST, OpTrust: TRUSTED}
+			c.setOpTrust(TRUSTED)
 		}
 		time.Sleep(time.Second)
 	}
 }
 
+// FrozenWatcher listens for Frozen events and calls WithdrawFrozen
+// if a balance proof is available.
+func (c *Client) FrozenWatcher() {
+	ctx, cancel := context.WithCancel(c.Ctx())
+	defer cancel()
+	sub, err := c.ethClient.SubscribeFrozen(ctx, c.contract, nil)
+	if err != nil {
+		c.logError("Frozen event subscription: %v", err)
+		return
+	}
+	defer sub.Unsubscribe()
+
+	select {
+	case err := <-sub.Err():
+		c.logError("Frozen event subscription: %v", err)
+		return
+	case event := <-sub.Events():
+		c.handleFrozen(event)
+	}
+}
+
+func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
+	epoch := event.Epoch
+	c.setOpTrust(UNTRUSTED)
+	c.log("❄️ Contract Frozen in epoch #%d", epoch)
+
+	c.balMtx.Lock()
+	defer c.balMtx.Unlock()
+	bal, ok := c.balances[epoch]
+	if !ok {
+		c.logOffChain("No balance-proof available for freeze")
+		return
+	}
+	status := make(chan *CmdStatus)
+	defer close(status)
+	go func() {
+		for msg := range status {
+			if msg.Err != nil {
+				c.logOnChain(msg.Err.Error())
+			} else {
+				c.logOnChain(msg.Msg)
+			}
+		}
+	}()
+	_, err := c.sendTx("WithdrawFrozen", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.WithdrawFrozen(auth, bindings.ErdstallBalance{Epoch: epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
+	}, status)
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("WithdrawFrozen TX: %w", err)}
+		return
+	}
+	c.log("❄️ WithdrawFrozen: Complete")
+}
+
 func (c *Client) lastBal() *EpochBalance {
 	c.balMtx.Lock()
 	defer c.balMtx.Unlock()
-	epoch := c.params.ExitEpoch(atomic.LoadUint64(&c.currentBlock))
+	epoch := c.params.ExitEpoch(atomic.LoadUint64(&c.lastBlock))
 	bal, ok := c.balances[epoch]
 	if !ok || bal.Bal == nil || bal.Bal.Sig == nil {
 		return nil
@@ -421,66 +463,127 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 		return
 	}
 
-	status <- &CmdStatus{Msg: "Exit TX: Preparing"}
-	otps, err := c.ethClient.NewTransactor(txCtx())
+	rec, err := c.sendTx("Exit", func(opts *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Exit(opts, bindings.ErdstallBalance{Epoch: bal.Epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
+	}, status)
 	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	status <- &CmdStatus{Msg: "Exit TX: Sending"}
-	tx, err := c.contract.Exit(otps, bindings.ErdstallBalance{Epoch: bal.Epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	status <- &CmdStatus{Msg: "Exit TX: Mining"}
-	rec, err := bind.WaitMined(txCtx(), c.ethClient, tx)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	if rec.Status == types.ReceiptStatusFailed {
-		status <- &CmdStatus{Err: errors.New("Exit TX: Receipt failed")}
-		/*reason, err := errorReason(c.Ctx(), &c.ethClient.ContractBackend, tx, rec.BlockNumber, c.ethClient.Account())
-		if err != nil {
-			c.logOnChain("Unknown revert reason: %v", err)
-		} else {
-			c.logOnChain("Exit TX revert reason: %s", reason)
-		}*/
+		status <- &CmdStatus{Err: fmt.Errorf("Exit TX: %w", err)}
 		return
 	}
 	c.logOnChain("Exit mined in block #%d", rec.BlockNumber.Uint64())
+	c.withdraw(bal.Epoch, status)
+}
+
+func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
+	defer close(status)
+	if len(args) != 0 {
+		status <- &CmdStatus{Err: errors.New("Command 'challenge' does not accept arguments.")}
+		return
+	}
+
+	// Wait for the next epoch, when we are currently in the response phase.
+	lastBlock := atomic.LoadUint64(&c.lastBlock)
+	if c.params.IsChallengeResponsePhase(lastBlock + 1) {
+		status <- &CmdStatus{Msg: "Waiting for next epoch"}
+		next := c.params.DepositDoneBlock(c.params.ExitEpoch(lastBlock + 1))
+		if err := c.ethClient.WaitForBlock(c.Ctx(), next); err != nil {
+			status <- &CmdStatus{Err: err}
+			return
+		}
+	}
+
+	tx, err := c.sendTx("Challenge", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Challenge(auth)
+	}, status)
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("Challenge TX: %w", err)}
+		return
+	}
+
+	// Wait for the operator til the end of the epoch and Freeze otherwise.
+	status <- &CmdStatus{Msg: "Exiting event: Waiting"}
+	subCtx, cancel := context.WithCancel(c.Ctx())
+	defer cancel()
+	exitEpoch := c.params.ExitEpoch(tx.BlockNumber.Uint64())
+	sub, err := c.ethClient.SubscribeExiting(subCtx, c.contract, []uint64{exitEpoch}, []common.Address{c.Address()})
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("Exiting subscription: %w", err)}
+		return
+	}
+	defer sub.Unsubscribe()
+
+	done := make(chan struct{})
+	go func() {
+		next := c.params.DepositDoneBlock(c.params.DepositEpoch(tx.BlockNumber.Uint64()))
+		c.ethClient.WaitForBlock(subCtx, next) // nolint: errcheck
+		close(done)
+	}()
+
+	select {
+	case <-done: // ChallengeReponse phase is over, freeze.
+		c.log("❄️ Freezing Contract")
+		_, err := c.sendTx("Freeze", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			return c.contract.Freeze(auth)
+		}, status)
+		if err != nil {
+			status <- &CmdStatus{Err: fmt.Errorf("Freezing TX: %w", err)}
+			return
+		}
+		// The FrozenWatcher will handle the withdrawal from hereon.
+	case err := <-sub.Err():
+		if err != nil {
+			c.logError("Exiting subscription: %v", err)
+		}
+		return
+	case <-sub.Events(): // Challenge was posted on-chain by OP.
+		c.logOnChain("Received on-chain challenge response")
+		c.withdraw(exitEpoch, status)
+	}
+}
+
+// sendTx already checks the receipt status and returns an error
+// when it failed.
+func (c *Client) sendTx(name string, f func(*bind.TransactOpts) (*types.Transaction, error), status chan *CmdStatus) (*types.Receipt, error) {
+	status <- &CmdStatus{Msg: name + " TX: Preparing"}
+	opts, err := c.ethClient.NewTransactor(txCtx())
+	if err != nil {
+		return nil, err
+	}
+	status <- &CmdStatus{Msg: name + " TX: Sending"}
+	tx, err := f(opts)
+	if err != nil {
+		return nil, err
+	}
+	status <- &CmdStatus{Msg: name + " TX: Mining"}
+	receipt, err := bind.WaitMined(txCtx(), c.ethClient, tx)
+	if err != nil {
+		return nil, err
+	}
+	if receipt.Status == types.ReceiptStatusFailed {
+		return nil, errors.New("Receipt failed")
+	}
+	return receipt, nil
+}
+
+func (c *Client) withdraw(exitEpoch uint64, status chan *CmdStatus) {
 	// Wait for the end of the Exit epoch before sending the Withdraw TX.
-	endExitBlock := c.params.EpochStartBlock(c.params.ExitEpoch(rec.BlockNumber.Uint64()) + 1)
+	endExitBlock := c.params.DepositStartBlock(exitEpoch + 1)
 	if err := c.ethClient.WaitForBlock(c.Ctx(), endExitBlock); err != nil {
 		status <- &CmdStatus{Err: err}
 		return
 	}
-	status <- &CmdStatus{Msg: "Withdraw TX: Preparing"}
-	otps, err = c.ethClient.NewTransactor(txCtx())
+
+	rec, err := c.sendTx("Withdraw", func(opts *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.Withdraw(opts, exitEpoch)
+	}, status)
 	if err != nil {
-		status <- &CmdStatus{Err: err}
+		status <- &CmdStatus{Err: fmt.Errorf("Withdraw TX: %w", err)}
 		return
 	}
-	status <- &CmdStatus{Msg: "Withdraw TX: Sending"}
-	tx, err = c.contract.Withdraw(otps, bal.Epoch)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	status <- &CmdStatus{Msg: "Withdraw TX: Mining"}
-	rec, err = bind.WaitMined(txCtx(), c.ethClient, tx)
-	if err != nil {
-		status <- &CmdStatus{Err: err}
-		return
-	}
-	if rec.Status == types.ReceiptStatusFailed {
-		status <- &CmdStatus{Err: errors.New("Withdraw TX: Receipt failed")}
-		return
-	}
+
 	c.logOnChain("Withdraw mined in block #%d", rec.BlockNumber.Uint64())
 	c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: big.NewInt(0)}}
-	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: TRUSTED}
+	c.setOpTrust(TRUSTED)
 }
 
 // writes to chainVvents
@@ -490,16 +593,17 @@ func (c *Client) listenOnChain() error {
 	subError := make(chan error)
 
 	go func() {
-		subError <- c.ethClient.SubscribeToEpochs(c.Ctx(), *c.params, epochs, blocks)
+		subError <- c.ethClient.SubscribeEpochs(c.Ctx(), *c.params, epochs, blocks)
 	}()
 	go c.BalanceProofWatcher()
+	go c.FrozenWatcher()
 
 	for !c.IsClosed() {
 		select {
 		case epoch := <-epochs:
 			c.events <- &Event{Type: NEW_EPOCH, EpochNum: epoch}
 		case block := <-blocks:
-			atomic.StoreUint64(&c.currentBlock, block)
+			atomic.StoreUint64(&c.lastBlock, block)
 			c.events <- &Event{Type: NEW_BLOCK, BlockNum: block}
 		case err := <-subError:
 			return err
@@ -519,6 +623,18 @@ func (c *Client) logOnChain(format string, args ...interface{}) {
 
 func (c *Client) logOffChain(format string, args ...interface{}) {
 	c.events <- &Event{Type: CHAIN_MSG, Message: "🍵 " + fmt.Sprintf(format, args...)}
+}
+
+func (c *Client) logError(format string, args ...interface{}) {
+	c.events <- &Event{Type: CHAIN_MSG, Message: "⚠ " + fmt.Sprintf(format, args...)}
+}
+
+func (c *Client) log(format string, args ...interface{}) {
+	c.events <- &Event{Type: CHAIN_MSG, Message: fmt.Sprintf(format, args...)}
+}
+
+func (c *Client) setOpTrust(trust Trust) {
+	c.events <- &Event{Type: SET_OP_TRUST, OpTrust: trust}
 }
 
 func (c *Client) Address() common.Address {

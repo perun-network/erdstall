@@ -153,7 +153,7 @@ func (operator *Operator) handleBlocks() error {
 	if err != nil {
 		return fmt.Errorf("reading BigBang: %w", err)
 	}
-	blockSub, err := operator.ethClient.SubscribeToBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
+	blockSub, err := operator.ethClient.SubscribeBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
 	if err != nil {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}

@@ -46,7 +46,7 @@ func (m PhaseMeter) render() string {
 	w := m.width * int(m.p.PhaseDuration)
 	//clrs := []int{BLUE, PURPLE, CYAN}
 	deposit := m.p.DepositEpoch(m.blockNum)
-	depositStart := m.p.EpochStartBlock(deposit)
+	depositStart := m.p.DepositStartBlock(deposit)
 	//leftInEpoch := m.p.DepositEndBlock(deposit) - m.blockNum
 	//tx := m.p.TxEpoch(m.blockNum)
 	//info := fmt.Sprintf("Deposit epoch %d has %d block(s) left.", deposit, leftInEpoch)

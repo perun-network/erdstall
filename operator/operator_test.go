@@ -80,7 +80,7 @@ func TestOperator(t *testing.T) {
 	log.Info("operator_test.TestOperator: Retrieved balance proofs")
 
 	// challenge response
-	sub, exitEvents := user1.SubscribeToExitEvents()
+	sub, exitEvents := user1.SubscribeExitEvents()
 	defer sub.Unsubscribe()
 	user1.Challenge()
 	onChainTransactionTimeout := time.Duration(blockTime*environment.operator.EnclaveParams().PhaseDuration) * time.Second
@@ -220,7 +220,7 @@ func (e *environment) Shutdown() {
 func newDefaultConfig() *Config {
 	return &Config{
 		"ws://127.0.0.1:8545",
-		"tag volcano eight thank tide danger coast health above argue embrace heavy",
+		"pistol kiwi shrug future ozone ostrich match remove crucial oblige cream critic",
 		"m/44'/60'/0'/0/0",
 		"m/44'/60'/0'/0/1",
 		3,

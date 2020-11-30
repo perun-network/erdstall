@@ -170,8 +170,8 @@ func (u *User) Nonce() uint64 {
 	return u.nonceCounter
 }
 
-// SubscribeToExitEvents subscribes the user the exit events.
-func (u *User) SubscribeToExitEvents() (event.Subscription, chan *bindings.ErdstallExiting) {
+// SubscribeExitEvents subscribes the user the exit events.
+func (u *User) SubscribeExitEvents() (event.Subscription, chan *bindings.ErdstallExiting) {
 	exitEvents := make(chan *bindings.ErdstallExiting)
 	sub, err := u.contract.WatchExiting(nil, exitEvents, nil, nil)
 	if err != nil {
