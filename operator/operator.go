@@ -10,8 +10,6 @@ import (
 	"net/rpc"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
 	perrors "perun.network/go-perun/pkg/errors"
@@ -228,14 +226,8 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 		ctx, cancel := createOnChainContext()
 		defer cancel()
 
-		r, err := bind.WaitMined(ctx, operator.ethClient.ContractBackend, tx)
-		if err != nil {
+		if _, err := operator.ethClient.ConfirmTransaction(ctx, tx, operator.ethClient.Account()); err != nil {
 			log.Errorf("Operator.handleChallengedEvent: Failed to wait for mining of response to challenge %v: %v", c, err)
-			return
-		}
-
-		if r.Status != types.ReceiptStatusSuccessful {
-			log.Errorf("Operator.handleChallengedEvent: Failed to complete response transaction for challenge %v", c)
 			return
 		}
 
