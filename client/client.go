@@ -104,11 +104,6 @@ const (
 	BENCH
 )
 
-const (
-	// How long do we wait for the deposit proof after the deposit phase is over.
-	depositProofGrace = time.Second * 30
-)
-
 // Trust describes how we perceive the operator.
 type Trust = string
 
@@ -305,11 +300,11 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		}
 	}()
 	go func() {
-		depEndBlock := c.params.DepositDoneBlock(epoch)
+		depEndBlock := c.params.TxDoneBlock(epoch)
+		c.logOffChain("Waiting for deposit proof until block #%d", depEndBlock)
 		err := c.ethClient.WaitForBlock(ctx, depEndBlock) // Add PowDepth here if needed
 		if err == nil {
 			c.logOffChain("Deposit Phase for Epoch %d ended in block %d", epoch, depEndBlock)
-			time.Sleep(depositProofGrace)
 		}
 		waitErr <- err
 	}()
@@ -350,8 +345,8 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		status <- &CmdStatus{War: "Deposit proof: Operator timed out - resuming protocol"}
 		c.setOpTrust(UNKNOWN)
 	}
-	// TODO challenge
-	status <- &CmdStatus{Err: errors.New("TODO challenge")}
+
+	c.challenge(status)
 }
 
 // BalanceProofWatcher waits for the balance proof of an epoch and disputes
@@ -410,15 +405,8 @@ func (c *Client) FrozenWatcher() {
 func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 	epoch := event.Epoch
 	c.setOpTrust(UNTRUSTED)
-	c.log("❄️ Contract Frozen in epoch #%d", epoch)
+	c.log("❄️Contract Frozen in epoch #%d", epoch)
 
-	c.balMtx.Lock()
-	defer c.balMtx.Unlock()
-	bal, ok := c.balances[epoch]
-	if !ok {
-		c.logOffChain("No balance-proof available for freeze")
-		return
-	}
 	status := make(chan *CmdStatus)
 	defer close(status)
 	go func() {
@@ -430,14 +418,30 @@ func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 			}
 		}
 	}()
-	_, err := c.sendTx("WithdrawFrozen", func(auth *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.WithdrawFrozen(auth, bindings.ErdstallBalance{Epoch: epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
-	}, status)
-	if err != nil {
-		status <- &CmdStatus{Err: fmt.Errorf("WithdrawFrozen TX: %w", err)}
-		return
+
+	c.balMtx.Lock()
+	bal, ok := c.balances[epoch]
+	c.balMtx.Unlock()
+	// Use WithdrawFrozen if we have a balance-proof and RecoverDeposit otherwise.
+	if ok {
+		_, err := c.sendTx("WithdrawFrozen", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			return c.contract.WithdrawFrozen(auth, bindings.ErdstallBalance{Epoch: epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
+		}, status)
+		if err != nil {
+			status <- &CmdStatus{Err: fmt.Errorf("WithdrawFrozen TX: %w", err)}
+			return
+		}
+		c.logOnChain("❄️WithdrawFrozen: Complete")
+	} else {
+		_, err := c.sendTx("RecoverDeposit", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			return c.contract.RecoverDeposit(auth)
+		}, status)
+		if err != nil {
+			status <- &CmdStatus{Err: fmt.Errorf("❄RecoverDeposit TX: %w", err)}
+			return
+		}
+		c.logOnChain("❄️RecoverDeposit: Complete")
 	}
-	c.log("❄️ WithdrawFrozen: Complete")
 }
 
 func (c *Client) lastBal() *EpochBalance {
@@ -485,13 +489,16 @@ func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
 	lastBlock := atomic.LoadUint64(&c.lastBlock)
 	if c.params.IsChallengeResponsePhase(lastBlock + 1) {
 		status <- &CmdStatus{Msg: "Waiting for next epoch"}
-		next := c.params.DepositDoneBlock(c.params.ExitEpoch(lastBlock + 1))
+		next := c.params.DepositDoneBlock(c.params.DepositEpoch(lastBlock + 1))
 		if err := c.ethClient.WaitForBlock(c.Ctx(), next); err != nil {
 			status <- &CmdStatus{Err: err}
 			return
 		}
 	}
+	c.challenge(status)
+}
 
+func (c *Client) challenge(status chan *CmdStatus) {
 	tx, err := c.sendTx("Challenge", func(auth *bind.TransactOpts) (*types.Transaction, error) {
 		return c.contract.Challenge(auth)
 	}, status)
@@ -521,7 +528,7 @@ func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
 
 	select {
 	case <-done: // ChallengeReponse phase is over, freeze.
-		c.log("❄️ Freezing Contract")
+		c.log("❄️Freezing Contract")
 		_, err := c.sendTx("Freeze", func(auth *bind.TransactOpts) (*types.Transaction, error) {
 			return c.contract.Freeze(auth)
 		}, status)

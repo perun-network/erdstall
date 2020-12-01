@@ -54,3 +54,11 @@ func (p Parameters) DepositStartBlock(epoch uint64) uint64 {
 func (p Parameters) DepositDoneBlock(epoch uint64) uint64 {
 	return p.DepositStartBlock(epoch) + p.PhaseDuration
 }
+
+func (p Parameters) TxDoneBlock(epoch uint64) uint64 {
+	return p.DepositStartBlock(epoch) + 2*p.PhaseDuration
+}
+
+func (p Parameters) ExitDoneBlock(epoch uint64) uint64 {
+	return p.DepositStartBlock(epoch) + 3*p.PhaseDuration
+}
