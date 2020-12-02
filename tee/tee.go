@@ -111,11 +111,13 @@ type (
 	Balance struct {
 		Epoch   Epoch          `json:"epoch"`   // sol: uint64
 		Account common.Address `json:"account"` // sol: address
-		Value   *big.Int       `json:"value"`   // sol: uint256
+		Value   *Amount        `json:"value"`   // sol: uint256
 	}
 
 	// Sig represents an ethereum signature. It is always 65 bytes long.
 	Sig []byte
+	// Amount is a big.Int wrapper to allow for json en-decoding.
+	Amount big.Int
 )
 
 func (s Sig) MarshalJSON() ([]byte, error) {
@@ -135,31 +137,19 @@ func (s *Sig) UnmarshalJSON(data []byte) error {
 	return err
 }
 
-func (b Balance) MarshalJSON() ([]byte, error) {
-	aux := map[string]interface{}{
-		"epoch":   b.Epoch,
-		"account": b.Account,
-		"value":   b.Value.Text(10),
-	}
-	return json.Marshal(aux)
+func (a Amount) MarshalJSON() ([]byte, error) {
+	return json.Marshal(((*big.Int)(&a)).String())
 }
 
-func (b *Balance) UnmarshalJSON(data []byte) error {
-	aux := struct {
-		Epoch   Epoch          `json:"epoch"`
-		Account common.Address `json:"account"`
-		Value   string         `json:"value"`
-	}{}
+func (a *Amount) UnmarshalJSON(data []byte) error {
+	var aux string
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	b.Epoch = aux.Epoch
-	b.Account = aux.Account
-	value, ok := new(big.Int).SetString(aux.Value, 10)
+	_, ok := (*big.Int)(a).SetString(aux, 10)
 	if !ok {
-		return fmt.Errorf("could not parse decimal string as big.Int")
+		return fmt.Errorf("Could not parse big.Int")
 	}
-	b.Value = value
 	return nil
 }
 
@@ -167,6 +157,6 @@ func (b *Balance) Clone() Balance {
 	return Balance{
 		Epoch:   b.Epoch,
 		Account: b.Account,
-		Value:   new(big.Int).Set(b.Value),
+		Value:   (*Amount)(new(big.Int).Set((*big.Int)(b.Value))),
 	}
 }

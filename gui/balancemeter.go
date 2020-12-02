@@ -56,8 +56,8 @@ func (m BalanceMeter) render() string {
 		return str + color("not withdraw", RED) + "."
 	}
 	with := m.exitPossible.Bal.Balance.Value
-	if with.Cmp(m.balance) == 0 {
+	if (*big.Int)(with).Cmp(m.balance) == 0 {
 		return str + "withdraw " + bold("everything") + "."
 	}
-	return str + fmt.Sprintf("withdraw %s ETH.", bold(eth.WeiToEthFloat(with).String()))
+	return str + fmt.Sprintf("withdraw %s ETH.", bold(eth.WeiToEthFloat((*big.Int)(with)).String()))
 }

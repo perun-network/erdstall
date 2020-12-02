@@ -125,7 +125,7 @@ func (u *User) DepositProof(ctx context.Context) {
 	}
 	u.dp = proof
 
-	if u.dp.Balance.Value.Int64() != u.TargetBalance {
+	if (*big.Int)(u.dp.Balance.Value).Int64() != u.TargetBalance {
 		u.FailNow()
 	}
 
@@ -141,7 +141,7 @@ func (u *User) Transfer(ctx context.Context, receiver *User, amount int64) {
 		Epoch:     u.epoch,
 		Sender:    u.Address(),
 		Recipient: receiver.Address(),
-		Amount:    big.NewInt(amount),
+		Amount:    (*tee.Amount)(big.NewInt(amount)),
 	}
 
 	if err := tx.Sign(u.contractAddress, u.Account(), u.wallet); err != nil {
@@ -165,8 +165,8 @@ func (u *User) BalanceProof(ctx context.Context) {
 	}
 	u.bp = proof
 
-	if u.bp.Balance.Value.Int64() != u.TargetBalance {
-		u.Errorf("incorrect balance, got %d, expected %d", u.bp.Balance.Value.Int64(), u.TargetBalance)
+	if balance := (*big.Int)(u.bp.Balance.Value).Int64(); balance != u.TargetBalance {
+		u.Errorf("incorrect balance, got %d, expected %d", balance, u.TargetBalance)
 	}
 
 	log.Debug("Got balance proof for epoch #", u.bp.Balance.Epoch)

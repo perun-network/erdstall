@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -23,7 +22,7 @@ type Transaction struct {
 	Epoch     Epoch          `json:"epoch"`
 	Sender    common.Address `json:"sender"`
 	Recipient common.Address `json:"recipient"`
-	Amount    *big.Int       `json:"amount"`
+	Amount    *Amount        `json:"amount"`
 	Sig       Sig            `json:"sig"`
 	hash      common.Hash
 }

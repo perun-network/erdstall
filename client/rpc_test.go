@@ -16,6 +16,7 @@ import (
 	"github.com/perun-network/erdstall/client"
 	"github.com/perun-network/erdstall/operator"
 	optest "github.com/perun-network/erdstall/operator/test"
+	"github.com/perun-network/erdstall/tee"
 	ttest "github.com/perun-network/erdstall/tee/test"
 )
 
@@ -73,8 +74,8 @@ func TestRPC_ClientOp(t *testing.T) {
 
 	for i := int64(0); i < 5; i++ {
 		// Push in proofs for our client.
-		dp.Balance.Value = big.NewInt(i)
-		bp.Balance.Value = big.NewInt(i)
+		dp.Balance.Value = (*tee.Amount)(big.NewInt(i))
+		bp.Balance.Value = (*tee.Amount)(big.NewInt(i))
 		enclave.PushDepositProof(dp)
 		enclave.PushBalanceProof(bp)
 		// Push in proofs for other clients.

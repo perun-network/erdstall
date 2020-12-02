@@ -59,6 +59,6 @@ func RandomBalance(rng *rand.Rand) tee.Balance {
 	return tee.Balance{
 		Epoch:   rng.Uint64(),
 		Account: common.Address(wtest.NewRandomAddress(rng)),
-		Value:   big.NewInt(rng.Int63()),
+		Value:   (*tee.Amount)(big.NewInt(rng.Int63())),
 	}
 }

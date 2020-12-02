@@ -102,7 +102,7 @@ func (c *Client) Exit(ctx context.Context, bal *tee.BalanceProof) error {
 		return c.contract.Exit(tr, bindings.ErdstallBalance{
 			Epoch:   bal.Balance.Epoch,
 			Account: bal.Balance.Account,
-			Value:   bal.Balance.Value,
+			Value:   (*big.Int)(bal.Balance.Value),
 		}, bal.Sig)
 	})
 	if err == nil {
@@ -127,7 +127,7 @@ func (c *Client) Send(recipient common.Address, amount *big.Int) error {
 		Epoch:     c.TxEpoch(),
 		Sender:    c.Address(),
 		Recipient: recipient,
-		Amount:    amount,
+		Amount:    (*tee.Amount)(amount),
 	}
 
 	c.SignTx(tx)
@@ -208,11 +208,11 @@ func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs 
 			}
 		},
 		func(tx *tee.Transaction) {
-			tx.Amount = new(big.Int).Add(tx.Amount, big.NewInt(1))
+			tx.Amount = (*tee.Amount)(new(big.Int).Add((*big.Int)(tx.Amount), big.NewInt(1)))
 			c.SignTx(tx)
 		},
 		func(tx *tee.Transaction) {
-			tx.Amount = big.NewInt(-1)
+			tx.Amount = (*tee.Amount)(big.NewInt(-1))
 			c.SignTx(tx)
 		},
 	}
@@ -224,7 +224,7 @@ func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs 
 			Epoch:     c.TxEpoch(),
 			Sender:    c.ethClient.Account().Address,
 			Recipient: validRecipient,
-			Amount:    c.Balance(), // total balance is valid
+			Amount:    (*tee.Amount)(c.Balance()), // total balance is valid
 		}
 		invalidate(tx)
 		txs = append(txs, tx)

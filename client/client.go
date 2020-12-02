@@ -213,7 +213,7 @@ func (c *Client) createTransfer(receiver common.Address, amount *big.Int) (tee.T
 		Epoch:     c.params.TxEpoch(block),
 		Sender:    c.Address(),
 		Recipient: receiver,
-		Amount:    amount,
+		Amount:    (*tee.Amount)(amount),
 	}
 	c.txNonce++
 	err := tx.Sign(c.params.Contract, c.ethClient.Account(), c.signer)
@@ -338,7 +338,7 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		if !ok || err != nil {
 			status <- &CmdStatus{War: "Deposit proof: Invalid Signature - resuming protocol"}
 			c.setOpTrust(UNTRUSTED)
-		} else if p.Balance.Value.Cmp(amount) != 0 || p.Balance.Epoch != epoch || p.Balance.Account != c.Address() {
+		} else if (*big.Int)(p.Balance.Value).Cmp(amount) != 0 || p.Balance.Epoch != epoch || p.Balance.Account != c.Address() {
 			status <- &CmdStatus{War: "Deposit proof: Wrong Proof - resuming protocol"}
 			c.setOpTrust(UNTRUSTED)
 		} else {
@@ -375,7 +375,7 @@ func (c *Client) BalanceProofWatcher() {
 			c.logProof("Balance Proof error: %v", err)
 			c.setOpTrust(UNKNOWN)
 		} else if proof.Balance.Epoch > oldEpoch {
-			c.logProof("Got Balance Proof for %v ETH in epoch %d", eth.WeiToEthFloat(proof.Balance.Value), proof.Balance.Epoch)
+			c.logProof("Got Balance Proof for %v ETH in epoch %d", eth.WeiToEthFloat((*big.Int)(proof.Balance.Value)), proof.Balance.Epoch)
 			oldEpoch = proof.Balance.Epoch
 			c.balMtx.Lock()
 			c.balances[proof.Balance.Epoch] = EpochBalance{Balance: proof.Balance, Bal: &proof}
@@ -388,7 +388,7 @@ func (c *Client) BalanceProofWatcher() {
 				return
 			}
 
-			c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: new(big.Int).Set(proof.Balance.Value)}}
+			c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: new(big.Int).Set((*big.Int)(proof.Balance.Value))}}
 			c.setOpTrust(TRUSTED)
 		}
 		time.Sleep(time.Second)
@@ -440,7 +440,7 @@ func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 		}
 	}()
 	_, err := c.sendTx("WithdrawFrozen", func(auth *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.WithdrawFrozen(auth, bindings.ErdstallBalance{Epoch: epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
+		return c.contract.WithdrawFrozen(auth, bindings.ErdstallBalance{Epoch: epoch, Account: bal.Account, Value: (*big.Int)(bal.Value)}, bal.Bal.Sig)
 	}, status)
 	if err != nil {
 		status <- &CmdStatus{Err: fmt.Errorf("WithdrawFrozen TX: %w", err)}
@@ -473,7 +473,7 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 	}
 
 	rec, err := c.sendTx("Exit", func(opts *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.Exit(opts, bindings.ErdstallBalance{Epoch: bal.Epoch, Account: bal.Account, Value: bal.Value}, bal.Bal.Sig)
+		return c.contract.Exit(opts, bindings.ErdstallBalance{Epoch: bal.Epoch, Account: bal.Account, Value: (*big.Int)(bal.Value)}, bal.Bal.Sig)
 	}, status)
 	if err != nil {
 		status <- &CmdStatus{Err: fmt.Errorf("Exit TX: %w", err)}

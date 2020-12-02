@@ -5,6 +5,7 @@ package tee_test
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"math/rand"
 	"testing"
 	"time"
@@ -110,6 +111,6 @@ func toEthBals(b tee.Balance) bindings.ErdstallBalance {
 	return bindings.ErdstallBalance{
 		Epoch:   b.Epoch,
 		Account: b.Account,
-		Value:   b.Value,
+		Value:   (*big.Int)(b.Value),
 	}
 }

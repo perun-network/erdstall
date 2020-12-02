@@ -3,6 +3,8 @@
 package tee
 
 import (
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -34,7 +36,7 @@ func encodeBalance(tag string, contract common.Address, balance Balance) ([]byte
 		contract,
 		balance.Epoch,
 		balance.Account,
-		balance.Value,
+		(*big.Int)(balance.Value),
 	)
 }
 
@@ -57,6 +59,6 @@ func EncodeTransaction(contract common.Address, tx Transaction) ([]byte, error) 
 		tx.Epoch,
 		tx.Sender,
 		tx.Recipient,
-		tx.Amount,
+		(*big.Int)(tx.Amount),
 	)
 }

@@ -219,7 +219,7 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 	balance := bindings.ErdstallBalance{
 		Epoch:   balanceProof.Balance.Epoch,
 		Account: balanceProof.Balance.Account,
-		Value:   balanceProof.Balance.Value,
+		Value:   (*big.Int)(balanceProof.Balance.Value),
 	}
 
 	tx, err := operator.contract.Exit(tr, balance, balanceProof.Sig)

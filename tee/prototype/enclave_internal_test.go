@@ -111,7 +111,7 @@ func TestEnclave(t *testing.T) {
 		ok, err := tee.VerifyDepositProof(params, *dp)
 		requiree.True(ok)
 		requiree.NoError(err)
-		requiree.Zero(initValue.Cmp(dp.Balance.Value))
+		requiree.Zero(initValue.Cmp((*big.Int)(dp.Balance.Value)))
 	}
 
 	bps, err := enc.BalanceProofs()
@@ -235,7 +235,7 @@ func verifyBalanceProofs(t require.TestingT,
 		require.True(ok)
 		require.NoError(err)
 		require.Contains(expBalances, bp.Balance.Account)
-		got, exp := bp.Balance.Value, expBalances[bp.Balance.Account].Balance()
+		got, exp := (*big.Int)(bp.Balance.Value), expBalances[bp.Balance.Account].Balance()
 		require.Zerof(got.Cmp(exp),
 			"balance mismatch for %s, got: %v, expected: %v [ETH]", bp.Balance.Account.String(), eth.WeiToEthFloat(got), eth.WeiToEthFloat(exp))
 	}
