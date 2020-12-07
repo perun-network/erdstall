@@ -209,7 +209,7 @@ func (e *Enclave) generateDepositProof(depEpoch *Epoch, acc common.Address) (*te
 	b := tee.Balance{
 		Epoch:   depEpoch.Number,
 		Account: acc,
-		Value:   new(big.Int).Set(depEpoch.balances[acc].Value),
+		Value:   (*tee.Amount)(new(big.Int).Set(depEpoch.balances[acc].Value)),
 	}
 
 	msg, err := tee.EncodeDepositProof(e.params.Contract, b)
@@ -243,7 +243,7 @@ func (e *Enclave) generateBalanceProofs(txEpoch *Epoch) ([]*tee.BalanceProof, er
 		b := tee.Balance{
 			Epoch:   txEpoch.Number,
 			Account: acc,
-			Value:   bal.Value,
+			Value:   (*tee.Amount)(bal.Value),
 		}
 
 		bp, err := e.signBalanceProof(b)
@@ -405,7 +405,7 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 
 	if tx.Epoch != ep.Number {
 		return fmt.Errorf("wrong TX Epoch: expected %d, got %d", ep.Number, tx.Epoch)
-	} else if tx.Amount.Sign() == -1 {
+	} else if (*big.Int)(tx.Amount).Sign() == -1 {
 		return fmt.Errorf("negative amount: %v", tx.Amount)
 	}
 
@@ -416,14 +416,14 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 		return fmt.Errorf("unknown sender: %x", tx.Sender)
 	case !okr:
 		return fmt.Errorf("unknown recipient: %x", tx.Recipient)
-	case sender.Value.Cmp(tx.Amount) == LT:
+	case sender.Value.Cmp((*big.Int)(tx.Amount)) == LT:
 		return fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
 	case tx.Nonce != sender.Nonce+1:
 		return fmt.Errorf("sender tx nonce: %v, expected %v", tx.Nonce, sender.Nonce+1)
 	}
 
-	sender.Value.Sub(sender.Value, tx.Amount)
-	recipient.Value.Add(recipient.Value, tx.Amount)
+	sender.Value.Sub(sender.Value, (*big.Int)(tx.Amount))
+	recipient.Value.Add(recipient.Value, (*big.Int)(tx.Amount))
 	sender.Nonce = tx.Nonce
 
 	return nil

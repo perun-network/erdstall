@@ -29,7 +29,7 @@ func NewTxFromTo(rng *rand.Rand, sender, recipient common.Address) *tee.Transact
 		Epoch:     uint64(rng.Int63()),
 		Sender:    sender,
 		Recipient: recipient,
-		Amount:    big.NewInt(rng.Int63()),
+		Amount:    (*tee.Amount)(big.NewInt(rng.Int63())),
 	}
 }
 

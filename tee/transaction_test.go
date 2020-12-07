@@ -11,6 +11,7 @@ import (
 
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
+	wiretest "github.com/perun-network/erdstall/wire/test"
 )
 
 func TestTransaction_SignVerify(t *testing.T) {
@@ -31,4 +32,11 @@ func TestTransaction_SignVerify(t *testing.T) {
 	ok, err := tee.VerifyTransaction(contract, *tx)
 	require.True(ok)
 	require.NoError(err)
+}
+
+func TestTransaction_Json(t *testing.T) {
+	rng := test.Prng(t)
+	tx := ttest.RandomTx(t, rng)
+
+	wiretest.GenericJSONMarshallingTest(t, *tx, &tee.Transaction{})
 }

@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package test
 
 import (
 	"context"
 	"math/big"
-	"net/rpc"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/perun-network/erdstall/client"
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
@@ -31,7 +33,8 @@ type User struct {
 	wallet            accounts.Wallet
 	account           accounts.Account
 	ethClient         *eth.Client
-	rpcClient         *rpc.Client
+	rpcClient         *client.RPC
+	proofSub          *client.Subscription
 	contract          *bindings.Erdstall
 	contractAddress   common.Address
 	nonceCounter      uint64
@@ -58,7 +61,7 @@ func CreateUser(
 	ethURL string,
 	wallet accounts.Wallet,
 	account accounts.Account,
-	rpcURL string,
+	rpcHost string, rpcPort uint16,
 	contractAddress common.Address,
 	enclaveParameters tee.Parameters,
 ) *User {
@@ -69,9 +72,13 @@ func CreateUser(
 		t.Fatal("creating ethereum wallet and client:", err)
 	}
 
-	rpcClient, err := rpc.DialHTTP("tcp", rpcURL)
+	rpcClient, err := client.NewRPC(rpcHost, rpcPort)
 	if err != nil {
 		t.Fatal("dialing rpc:", err)
+	}
+	sub, err := rpcClient.Subscribe(ctx, account.Address)
+	if err != nil {
+		t.Fatal("subscribing:", err)
 	}
 
 	contract, err := bindings.NewErdstall(contractAddress, ethClient)
@@ -79,7 +86,7 @@ func CreateUser(
 		t.Fatal("loading contract:", err)
 	}
 
-	return &User{t, wallet, account, ethClient, rpcClient, contract, contractAddress, 0, 0, enclaveParameters, tee.DepositProof{}, tee.BalanceProof{}, 0}
+	return &User{t, wallet, account, ethClient, rpcClient, sub, contract, contractAddress, 0, 0, enclaveParameters, tee.DepositProof{}, tee.BalanceProof{}, 0}
 }
 
 // Deposit deposits the current target balance at the TEE Plasma.
@@ -111,13 +118,14 @@ func (u *User) Deposit() {
 }
 
 // DepositProof returns the deposit proof for the last epoch.
-func (u *User) DepositProof() {
-	err := u.rpcClient.Call("RemoteEnclave.GetDepositProof", u.Address(), &u.dp)
+func (u *User) DepositProof(ctx context.Context) {
+	proof, err := u.proofSub.DepositProof(ctx)
 	if err != nil {
-		u.Fatal("calling RemoteEnclave.GetDepositProof:", err)
+		u.Fatal("calling Subscription.DepositProof:", err)
 	}
+	u.dp = proof
 
-	if u.dp.Balance.Value.Int64() != u.TargetBalance {
+	if (*big.Int)(u.dp.Balance.Value).Int64() != u.TargetBalance {
 		u.FailNow()
 	}
 
@@ -126,23 +134,23 @@ func (u *User) DepositProof() {
 }
 
 // Transfer transfers the specified amount to the specified receiver.
-func (u *User) Transfer(receiver *User, amount int64) {
+func (u *User) Transfer(ctx context.Context, receiver *User, amount int64) {
 	log.Debug("Sending transfer in epoch #", u.dp.Balance.Epoch)
 	tx := tee.Transaction{
 		Nonce:     u.Nonce(),
 		Epoch:     u.epoch,
 		Sender:    u.Address(),
 		Recipient: receiver.Address(),
-		Amount:    big.NewInt(amount),
+		Amount:    (*tee.Amount)(big.NewInt(amount)),
 	}
 
 	if err := tx.Sign(u.contractAddress, u.Account(), u.wallet); err != nil {
 		u.Fatal("Signing transaction:", err)
 	}
 
-	err := u.rpcClient.Call("RemoteEnclave.AddTransaction", tx, nil)
+	err := u.rpcClient.SendTx(ctx, tx)
 	if err != nil {
-		u.Fatal("RemoteEnclave.AddTransaction error:", err)
+		u.Fatal("RPC.Send error:", err)
 	}
 
 	u.TargetBalance -= amount
@@ -150,14 +158,15 @@ func (u *User) Transfer(receiver *User, amount int64) {
 }
 
 // BalanceProof returns the balance proof for the last epoch.
-func (u *User) BalanceProof() {
-	err := u.rpcClient.Call("RemoteEnclave.GetBalanceProof", u.Address(), &u.bp)
+func (u *User) BalanceProof(ctx context.Context) {
+	proof, err := u.proofSub.BalanceProof(ctx)
 	if err != nil {
-		u.Fatal("calling RemoteEnclave.GetBalanceProof:", err)
+		u.Fatal("calling Subscription.BalanceProof:", err)
 	}
+	u.bp = proof
 
-	if u.bp.Balance.Value.Int64() != u.TargetBalance {
-		u.Errorf("incorrect balance, got %d, expected %d", u.bp.Balance.Value.Int64(), u.TargetBalance)
+	if balance := (*big.Int)(u.bp.Balance.Value).Int64(); balance != u.TargetBalance {
+		u.Errorf("incorrect balance, got %d, expected %d", balance, u.TargetBalance)
 	}
 
 	log.Debug("Got balance proof for epoch #", u.bp.Balance.Epoch)

@@ -11,16 +11,15 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 	_ "perun.network/go-perun/backend/ethereum" // init
-	wtest "perun.network/go-perun/backend/ethereum/wallet/test"
 	pkgtest "perun.network/go-perun/pkg/test"
 
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
+	"github.com/perun-network/erdstall/tee/test"
 )
 
 func TestErdstallBindings(t *testing.T) {
@@ -45,7 +44,7 @@ func TestErdstallBindings(t *testing.T) {
 
 func testEncodeBalances(t *testing.T, rng *rand.Rand, params *tee.Parameters, contr *bindings.Erdstall, opts *bind.CallOpts) {
 	for i := 0; i < 100; i++ {
-		bal := randomBalance(rng)
+		bal := test.RandomBalance(rng)
 		encodedByGo, err := tee.EncodeBalanceProof(params.Contract, bal)
 		require.NoError(t, err)
 		encodedBySol, err := contr.EncodeBalanceProof(opts, toEthBals(bal))
@@ -58,7 +57,7 @@ func testEncodeBalances(t *testing.T, rng *rand.Rand, params *tee.Parameters, co
 
 func testSigVerify(t *testing.T, rng *rand.Rand, params *tee.Parameters, contr *bindings.Erdstall, opts *bind.CallOpts, s *eth.SimSetup) {
 	for i := 0; i < 100; i++ {
-		bal := randomBalance(rng)
+		bal := test.RandomBalance(rng)
 		encodedByGo, err := tee.EncodeBalanceProof(params.Contract, bal)
 		require.NoError(t, err)
 		sig, err := s.HdWallet.SignText(s.Accounts[0], crypto.Keccak256(encodedByGo))
@@ -108,18 +107,10 @@ func deployErdstall(ctx context.Context, params *tee.Parameters, cl *eth.Client)
 	return contract, nil
 }
 
-func randomBalance(rng *rand.Rand) tee.Balance {
-	return tee.Balance{
-		Epoch:   rng.Uint64(),
-		Account: common.Address(wtest.NewRandomAddress(rng)),
-		Value:   big.NewInt(rng.Int63()),
-	}
-}
-
 func toEthBals(b tee.Balance) bindings.ErdstallBalance {
 	return bindings.ErdstallBalance{
 		Epoch:   b.Epoch,
 		Account: b.Account,
-		Value:   b.Value,
+		Value:   (*big.Int)(b.Value),
 	}
 }
