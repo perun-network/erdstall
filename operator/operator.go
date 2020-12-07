@@ -73,16 +73,19 @@ func Setup(cfg *Config) *Operator {
 	enclaveAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.EnclaveDerivationPath)
 	enclaveAccount, err := wallet.Derive(enclaveAccountDerivationPath, true)
 	AssertNoError(err)
-	log.Debug("Operator.Setup: Enclave account loaded")
+
+	operatorAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.OperatorDerivationPath)
+	operatorAccount, err := wallet.Derive(operatorAccountDerivationPath, true)
+	AssertNoError(err)
+
+	log.WithFields(log.Fields{
+		"op":      operatorAccount.Address.Hex(),
+		"enclave": enclaveAccount.Address.Hex()}).Info("Operator.Setup: Accounts loaded")
 
 	enclave := prototype.NewEnclaveWithAccount(wallet, enclaveAccount)
 	enclavePublicKey, _, err := enclave.Init()
 	AssertNoError(err)
 	log.Info("Operator.Setup: Enclave created")
-
-	operatorAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.OperatorDerivationPath)
-	operatorAccount, err := wallet.Derive(operatorAccountDerivationPath, true)
-	AssertNoError(err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
