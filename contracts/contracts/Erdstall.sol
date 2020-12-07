@@ -50,11 +50,6 @@ contract Erdstall {
         _;
     }
 
-    modifier onlyFrozen {
-        require(isFrozen(), "plasma not frozen");
-        _;
-    }
-
     //
     // Normal Operation
     //
@@ -115,24 +110,7 @@ contract Erdstall {
         emit Challenged(epoch, msg.sender);
     }
 
-    // Freezes the contract such that only exits of the prior exit phase can be
-    // posted.
-    // Can be called by any user if the prior phase has an open challenge.
-    // This must be called in the phase following the challenged exit phase.
-    function freeze() external {
-        require(!isFrozen(), "already frozen");
-        require(isLastEpochChallenged(), "no challenge in last epoch");
-
-        // freezing to previous epoch
-        uint64 epoch = freezingEpoch() - 1;
-        frozenEpoch = epoch;
-
-        emit Frozen(epoch);
-    }
-
-    function withdrawFrozen(Balance calldata balance, bytes calldata sig)
-    external onlyFrozen
-    {
+    function withdrawFrozen(Balance calldata balance, bytes calldata sig) external {
         verifyBalance(balance, sig);
 
         _withdrawFrozen(balance.value);
@@ -142,11 +120,12 @@ contract Erdstall {
     // received a deposit or balance proof from the operator. They must have
     // launched an unanswered challenge in the epoch's exit phase so that
     // the contract can be frozen.
-    function recoverDeposit() external onlyFrozen {
+    function recoverDeposit() external {
         _withdrawFrozen(0);
     }
 
     function _withdrawFrozen(uint256 _value) internal {
+        ensureFrozen();
         require(!frozenWithdraws[frozenEpoch][msg.sender], "already withdrawn (frozen)");
 
         uint256 value = _value + frozenDeposit();
@@ -154,6 +133,19 @@ contract Erdstall {
 
         msg.sender.transfer(value);
         emit Withdrawn(frozenEpoch, msg.sender, value);
+    }
+
+    // ensureFrozen ensures that the state of the contract is set to frozen if
+    // the last epoch has at least one unanswered challenge.
+    function ensureFrozen() internal {
+        if (isFrozen()) { return; }
+        require(isLastEpochChallenged(), "no challenge in last epoch");
+
+        // freezing to previous epoch
+        uint64 epoch = freezingEpoch() - 1;
+        frozenEpoch = epoch;
+
+        emit Frozen(epoch);
     }
 
     function frozenDeposit() internal view returns (uint256) {
