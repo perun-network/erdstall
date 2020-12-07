@@ -54,7 +54,7 @@ func (r *RPCServer) Serve(host string, port uint16) error {
 }
 
 func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request) {
-	upgrader := gorilla.Upgrader{}
+	upgrader := gorilla.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(out, in, nil)
 	if err != nil {
 		r.Log().WithError(err).Error("WS upgrade:", err)
