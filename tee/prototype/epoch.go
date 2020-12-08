@@ -74,7 +74,7 @@ func (e *Epoch) merge(p *Epoch) *Epoch {
 	mEpoch.balances = cloneBalances(p.balances)
 	for acc, bal := range e.balances {
 		if pBal, ok := mEpoch.balances[acc]; ok {
-			bal.Value.Add(bal.Value, pBal.Value)
+			pBal.Value.Add(bal.Value, pBal.Value)
 		} else {
 			mEpoch.balances[acc] = bal
 		}
