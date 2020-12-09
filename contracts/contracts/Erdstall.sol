@@ -25,6 +25,7 @@ contract Erdstall {
     mapping(uint64 => mapping(address => uint256)) public exits; // epoch => account => balance value
     mapping(uint64 => mapping(address => uint256)) public challenges; // epoch => account => recovery value
     mapping(uint64 => uint256) public numChallenges; // epoch => numChallenges
+    mapping(address => bool) public frozenWithdrawals; // account => withdrawn-flag
     uint64 public frozenEpoch = notFrozen; // epoch at which contract was frozen
 
     event Deposited(uint64 indexed epoch, address indexed account, uint256 value);
@@ -135,19 +136,43 @@ contract Erdstall {
         emit Challenged(epoch, msg.sender);
     }
 
-    // withdrawFrozen withdraws all funds locked in the frozen contract.
-    // The funds were already determined when the challenge was posted using
-    // either `challenge` or `challengeDeposit`.
+    // withdrawChallenge lets open challengers withdraw all funds locked in the
+    // frozen contract. The funds were already determined when the challenge was
+    // posted using either `challenge` or `challengeDeposit`.
     //
     // Implicitly calls ensureFrozen to ensure that the contract state is set to
     // frozen if the last epoch has an unanswered challenge.
-    function withdrawFrozen() external {
+    function withdrawChallenge() external {
         ensureFrozen();
 
-        uint64 brokenEpoch = frozenEpoch + 1;
-        uint256 value = challenges[brokenEpoch][msg.sender];
+        uint256 value = challenges[frozenEpoch+1][msg.sender];
         require(value > 0, "nothing left to withdraw (frozen)");
-        challenges[brokenEpoch][msg.sender] = 0;
+
+        _withdrawFrozen(value);
+    }
+
+    // withdrawFrozen lets non-challengers withdraw all funds locked in the
+    // frozen contract. Parameter `balance` needs to be the balance proof of the
+    // last unchallenged epoch.
+    //
+    // Implicitly calls ensureFrozen to ensure that the contract state is set to
+    // frozen if the last epoch has an unanswered challenge.
+    function withdrawFrozen(Balance calldata balance, bytes calldata sig) external {
+        ensureFrozen();
+
+        require(balance.account == msg.sender, "withdrawFrozen: wrong sender");
+        require(balance.epoch == frozenEpoch, "withdrawFrozen: wrong epoch");
+        verifyBalance(balance, sig);
+
+        // Also recover deposits from broken epoch
+        uint256 value = balance.value + deposits[frozenEpoch+1][msg.sender];
+
+        _withdrawFrozen(value);
+    }
+
+    function _withdrawFrozen(uint256 value) internal {
+        require(!frozenWithdrawals[msg.sender], "already withdrawn (frozen)");
+        frozenWithdrawals[msg.sender] = true;
 
         msg.sender.transfer(value);
         emit Withdrawn(frozenEpoch, msg.sender, value);
