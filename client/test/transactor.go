@@ -4,11 +4,7 @@ package test
 
 import "github.com/perun-network/erdstall/tee"
 
-type Transactor interface {
-	Send(*tee.Transaction) error
-}
-
-var _ Transactor = (*EnclaveTransactor)(nil)
+var _ tee.Transactor = (*EnclaveTransactor)(nil)
 
 type EnclaveTransactor struct {
 	Enclave tee.Enclave

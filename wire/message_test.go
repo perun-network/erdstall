@@ -7,6 +7,7 @@ import (
 
 	pkgtest "perun.network/go-perun/pkg/test"
 
+	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 	ttest "github.com/perun-network/erdstall/tee/test"
 	"github.com/perun-network/erdstall/wire"
@@ -26,7 +27,7 @@ func TestJson_Marshalling(t *testing.T) {
 	})
 
 	t.Run("Subscribe", func(t *testing.T) {
-		addr := ttest.NewRandomAddress(rng)
+		addr := eth.NewRandomAddress(rng)
 		obj := wire.NewSubscribe(id, addr)
 		test.GenericJSONMarshallingTest(t, *obj, &wire.Subscribe{})
 	})

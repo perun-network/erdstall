@@ -24,7 +24,7 @@ func RandomTx(t *testing.T, rng *rand.Rand) *tee.Transaction {
 	sender, err := w.NewAccount()
 	require.NoError(t, err)
 
-	contract := NewRandomAddress(rng)
+	contract := eth.NewRandomAddress(rng)
 	tx := NewTxFrom(rng, sender.Account.Address)
 
 	require.NoError(t, tx.Sign(contract, sender.Account, hdw))

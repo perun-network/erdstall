@@ -16,7 +16,6 @@ import (
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
-	"github.com/perun-network/erdstall/tee/test"
 )
 
 type Client struct {
@@ -24,7 +23,7 @@ type Client struct {
 	ethClient *eth.Client
 	contract  *bindings.Erdstall
 	wallet    tee.TextSigner
-	tr        Transactor
+	tr        tee.Transactor
 
 	Nonce         uint64
 	minedBlockNum uint64
@@ -33,7 +32,7 @@ type Client struct {
 
 // NewClient creates a testing Erdstall client.
 // The wallet w must contain the Account of ethClient for Erdstall TX sending.
-func NewClient(params tee.Parameters, wallet tee.TextSigner, ethClient *eth.Client, tr Transactor) (*Client, error) {
+func NewClient(params tee.Parameters, wallet tee.TextSigner, ethClient *eth.Client, tr tee.Transactor) (*Client, error) {
 	contract, err := bindings.NewErdstall(params.Contract, ethClient)
 	if err != nil {
 		return nil, fmt.Errorf("binding Erdstall contract: %w", err)
@@ -56,6 +55,10 @@ func (c *Client) nextNonce() uint64 {
 
 func (c *Client) Balance() *big.Int {
 	return new(big.Int).Set(c.balance)
+}
+
+func (c *Client) AddBalance(amount *big.Int) {
+	c.balance.Add(c.balance, amount)
 }
 
 func (c *Client) Address() common.Address {
@@ -152,7 +155,7 @@ func (c *Client) Send(recipient common.Address, amount *big.Int) error {
 func (c *Client) SendToClient(recipient *Client, amount *big.Int) error {
 	err := c.Send(recipient.Address(), amount)
 	if err == nil {
-		recipient.balance.Add(recipient.balance, amount)
+		recipient.AddBalance(amount)
 	}
 	return err
 }
@@ -198,11 +201,11 @@ func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs 
 			c.SignTx(tx)
 		},
 		func(tx *tee.Transaction) {
-			tx.Recipient = test.NewRandomAddress(rng)
+			tx.Recipient = eth.NewRandomAddress(rng)
 			c.SignTx(tx)
 		},
 		func(tx *tee.Transaction) {
-			tx.Sender = test.NewRandomAddress(rng)
+			tx.Sender = eth.NewRandomAddress(rng)
 			if err := tx.SignAlien(c.params.Contract, c.ethClient.Account(), c.wallet); err != nil {
 				log.Panicf("Error signing alien tx: %v", err)
 			}

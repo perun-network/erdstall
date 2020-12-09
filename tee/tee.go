@@ -7,6 +7,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -122,6 +123,8 @@ type (
 	// Amount is a big.Int wrapper to allow for json en-decoding.
 	Amount big.Int
 )
+
+var ErrEnclaveStopped = errors.New("Enclave stopped")
 
 func (s Sig) MarshalJSON() ([]byte, error) {
 	if len(s) != 65 {
