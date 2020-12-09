@@ -3,6 +3,8 @@
 package tee
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type (
@@ -153,10 +156,40 @@ func (a *Amount) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (a *Amount) GobEncode() ([]byte, error) {
+	return (*big.Int)(a).GobEncode()
+}
+
+func (a *Amount) GobDecode(blob []byte) error {
+	return (*big.Int)(a).GobDecode(blob)
+}
+
 func (b *Balance) Clone() Balance {
 	return Balance{
 		Epoch:   b.Epoch,
 		Account: b.Account,
 		Value:   (*Amount)(new(big.Int).Set((*big.Int)(b.Value))),
 	}
+}
+
+func (b Block) GobEncode() ([]byte, error) {
+	w := new(bytes.Buffer)
+	if err := b.EncodeRLP(w); err != nil {
+		return nil, fmt.Errorf("encoding block: %w", err)
+	}
+	if err := gob.NewEncoder(w).Encode(&b.Receipts); err != nil {
+		return nil, fmt.Errorf("encoding receipts: %w", err)
+	}
+	return w.Bytes(), nil
+}
+
+func (b *Block) GobDecode(blob []byte) error {
+	r := bytes.NewReader(blob)
+	if err := b.DecodeRLP(rlp.NewStream(r, 0)); err != nil {
+		return fmt.Errorf("decoding block: %w", err)
+	}
+	if err := gob.NewDecoder(r).Decode(&b.Receipts); err != nil {
+		return fmt.Errorf("decoding receipts: %w", err)
+	}
+	return nil
 }
