@@ -141,7 +141,7 @@ func initEnvironment(t *testing.T) *environment {
 		log.Fatal(err)
 	}
 
-	operator := op.Setup(cfg)
+	operator := op.SetupWithPrototypeEnclave(cfg)
 	params := operator.EnclaveParams()
 	log.Info("operator_test.initEnvironment: Created operator")
 	errg.Go(func() error {
