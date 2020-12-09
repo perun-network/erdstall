@@ -9,11 +9,15 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
+	"github.com/perun-network/erdstall/tee/prototype"
+	ttest "github.com/perun-network/erdstall/tee/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"perun.network/go-perun/pkg/context/test"
+	ctxtest "perun.network/go-perun/pkg/context/test"
+	pkgtest "perun.network/go-perun/pkg/test"
 )
 
 var _ tee.Enclave = (*mockEnclave)(nil)
@@ -68,7 +72,7 @@ func TestConn(t *testing.T) {
 	require.NoError(t, err)
 	enc := NewRPCEnclave(conn)
 
-	test.AssertTerminates(t, 10*time.Second, func() {
+	ctxtest.AssertTerminates(t, 10*time.Second, func() {
 		_, _, err = enc.Init()
 		assert.NoError(t, err)
 		assert.NoError(t, enc.Run(tee.Parameters{}))
@@ -81,4 +85,17 @@ func TestConn(t *testing.T) {
 		enc.Shutdown()
 		assert.NoError(t, enc.Stop())
 	})
+}
+
+func TestRPCEnclave(t *testing.T) {
+	rng := pkgtest.Prng(t)
+	encWallet := eth.NewHdWallet(rng)
+	l := newMockListener()
+
+	node := NewServer(prototype.NewEnclave(encWallet))
+	node.Start(l)
+
+	conn, err := l.dial()
+	require.NoError(t, err)
+	ttest.GenericEnclaveTest(t, NewRPCEnclave(conn))
 }
