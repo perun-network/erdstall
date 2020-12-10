@@ -6,5 +6,7 @@
 	"PhaseDuration": 3,
 	"ResponseDuration": 0,
 	"PowDepth": 0,
-	"Port": 8080
+	"Port": 8080,
+	"SendDepositProofs": true,
+	"SendBalanceProofs": true
 }

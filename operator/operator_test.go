@@ -232,5 +232,7 @@ func newDefaultConfig() *op.Config {
 		8401,
 		"0.0.0.0",
 		true,
+		true,
+		true,
 	}
 }

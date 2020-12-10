@@ -9,8 +9,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
 	perrors "perun.network/go-perun/pkg/errors"
@@ -29,9 +27,9 @@ type Operator struct {
 	EthClient *eth.Client
 	*depositProofs
 	*balanceProofs
-	rpcOperator       *RPCOperator
-	contract          *bindings.Erdstall
-	respondChallenges bool
+	rpcOperator *RPCOperator
+	contract    *bindings.Erdstall
+	cfg         Config
 }
 
 // EnclaveParams returns the enclave parameters.
@@ -44,25 +42,25 @@ func New(
 	enclave tee.Enclave,
 	params tee.Parameters,
 	client *eth.Client,
-	respondChallenges bool,
+	cfg Config,
 ) (*Operator, error) {
 	_contract, err := bindings.NewErdstall(params.Contract, client)
 	if err != nil {
 		return nil, fmt.Errorf("loading contract: %w", err)
 	}
 
-	if !respondChallenges {
-		log.Warn("Operator will not respond to on-chain challenges.")
+	if !cfg.RespondChallenges || !cfg.SendDepositProofs || !cfg.SendBalanceProofs {
+		log.Warnf("Operator will respond to challenges: %t, send out deposit proofs: %t, send out balance proofs: %t", cfg.RespondChallenges, cfg.SendDepositProofs, cfg.SendBalanceProofs)
 	}
 
 	return &Operator{
-		enclave:           enclave,
-		params:            params,
-		EthClient:         client,
-		depositProofs:     newDepositProofs(),
-		balanceProofs:     newBalanceProofs(),
-		contract:          _contract,
-		respondChallenges: respondChallenges,
+		enclave:       enclave,
+		params:        params,
+		EthClient:     client,
+		depositProofs: newDepositProofs(),
+		balanceProofs: newBalanceProofs(),
+		contract:      _contract,
+		cfg:           cfg,
 	}, nil
 }
 
@@ -114,7 +112,7 @@ func Setup(cfg *Config, enclave tee.Enclave) *Operator {
 	AssertNoError(err)
 	log.Infof("Operator.Setup: Contract deployed at %s", params.Contract.String())
 
-	operator, err := New(enclave, params, client, cfg.RespondChallenges)
+	operator, err := New(enclave, params, client, *cfg)
 	AssertNoError(err)
 
 	return operator
@@ -225,7 +223,7 @@ func (operator *Operator) handleChallenges() error {
 }
 
 func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
-	if !operator.respondChallenges {
+	if !operator.cfg.RespondChallenges {
 		log.Warn("Operator.handleChallengedEvent: ignoring challenges, returning.")
 		return nil
 	}
@@ -277,6 +275,11 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 }
 
 func (operator *Operator) handleDepositProofs() error {
+	if !operator.cfg.SendDepositProofs {
+		log.Warn("Ignoring deposit proofs")
+		return nil
+	}
+
 	for {
 		dps, err := operator.enclave.DepositProofs()
 		if err != nil {
@@ -293,6 +296,11 @@ func (operator *Operator) handleDepositProofs() error {
 }
 
 func (operator *Operator) handleBalanceProofs() error {
+	if !operator.cfg.SendDepositProofs {
+		log.Warn("Ignoring balance proofs")
+		return nil
+	}
+
 	for {
 		bps, err := operator.enclave.BalanceProofs()
 		if err != nil {
