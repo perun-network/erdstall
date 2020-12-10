@@ -21,6 +21,8 @@ type Config struct {
 	RPCPort                uint16
 	RPCHost                string
 	RespondChallenges      bool
+	SendDepositProofs      bool
+	SendBalanceProofs      bool
 }
 
 // dialTimeout will be used a timeout when dialing to the ethereum node.
