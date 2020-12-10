@@ -5,7 +5,6 @@ package tee_test
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"math/rand"
 	"testing"
 	"time"
@@ -47,7 +46,7 @@ func testEncodeBalances(t *testing.T, rng *rand.Rand, params *tee.Parameters, co
 		bal := test.RandomBalance(rng)
 		encodedByGo, err := tee.EncodeBalanceProof(params.Contract, bal)
 		require.NoError(t, err)
-		encodedBySol, err := contr.EncodeBalanceProof(opts, toEthBals(bal))
+		encodedBySol, err := contr.EncodeBalanceProof(opts, bal.ToEthBals())
 		require.NoError(t, err)
 
 		require.NoError(t, err)
@@ -73,7 +72,7 @@ func testSigVerify(t *testing.T, rng *rand.Rand, params *tee.Parameters, contr *
 		require.True(t, ok)
 		require.NoError(t, err)
 
-		err = contr.VerifyBalance(opts, toEthBals(bal), sig)
+		err = contr.VerifyBalance(opts, bal.ToEthBals(), sig)
 		require.NoError(t, err, "On-chain verify failed")
 	}
 }
@@ -105,12 +104,4 @@ func deployErdstall(ctx context.Context, params *tee.Parameters, cl *eth.Client)
 	params.InitBlock = receipt.BlockNumber.Uint64()
 
 	return contract, nil
-}
-
-func toEthBals(b tee.Balance) bindings.ErdstallBalance {
-	return bindings.ErdstallBalance{
-		Epoch:   b.Epoch,
-		Account: b.Account,
-		Value:   (*big.Int)(b.Value),
-	}
 }

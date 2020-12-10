@@ -102,11 +102,7 @@ func (c *Client) Deposit(ctx context.Context, amount *big.Int) error {
 // minedBlockNum is updated automatically.
 func (c *Client) Exit(ctx context.Context, bal *tee.BalanceProof) error {
 	err := c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.Exit(tr, bindings.ErdstallBalance{
-			Epoch:   bal.Balance.Epoch,
-			Account: bal.Balance.Account,
-			Value:   (*big.Int)(bal.Balance.Value),
-		}, bal.Sig)
+		return c.contract.Exit(tr, bal.Balance.ToEthBals(), bal.Sig)
 	})
 	if err == nil {
 		c.balance.SetUint64(0)

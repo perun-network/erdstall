@@ -14,6 +14,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
+
+	"github.com/perun-network/erdstall/contracts/bindings"
 )
 
 type (
@@ -195,4 +197,12 @@ func (b *Block) GobDecode(blob []byte) error {
 		return fmt.Errorf("decoding receipts: %w", err)
 	}
 	return nil
+}
+
+func (b *Balance) ToEthBals() bindings.ErdstallBalance {
+	return bindings.ErdstallBalance{
+		Epoch:   b.Epoch,
+		Account: b.Account,
+		Value:   (*big.Int)(b.Value),
+	}
 }

@@ -440,7 +440,7 @@ func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 		}
 	}()
 	_, err := c.sendTx("WithdrawFrozen", func(auth *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.WithdrawFrozen(auth, bindings.ErdstallBalance{Epoch: epoch, Account: bal.Account, Value: (*big.Int)(bal.Value)}, bal.Bal.Sig)
+		return c.contract.WithdrawFrozen(auth, bal.ToEthBals(), bal.Bal.Sig)
 	}, status)
 	if err != nil {
 		status <- &CmdStatus{Err: fmt.Errorf("WithdrawFrozen TX: %w", err)}
@@ -473,7 +473,7 @@ func (c *Client) CmdLeave(status chan *CmdStatus, args ...string) {
 	}
 
 	rec, err := c.sendTx("Exit", func(opts *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.Exit(opts, bindings.ErdstallBalance{Epoch: bal.Epoch, Account: bal.Account, Value: (*big.Int)(bal.Value)}, bal.Bal.Sig)
+		return c.contract.Exit(opts, bal.ToEthBals(), bal.Bal.Sig)
 	}, status)
 	if err != nil {
 		status <- &CmdStatus{Err: fmt.Errorf("Exit TX: %w", err)}
