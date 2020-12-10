@@ -106,7 +106,6 @@ func NewClientForWallet(
 // NewTransactor creates a new transactor.
 func (cl *Client) NewTransactor(ctx context.Context) (*bind.TransactOpts, error) {
 	tr, err := cl.ContractBackend.NewTransactor(ctx,
-		big.NewInt(0),
 		DefaultGasLimit,
 		cl.account)
 	if err != nil {

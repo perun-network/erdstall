@@ -45,7 +45,8 @@ type Client struct {
 	params    *tee.Parameters
 	events    chan *Event
 	// balMtx protects balances.
-	balMtx sync.Mutex
+	balMtx            sync.RWMutex
+	stopFrozenWatcher context.CancelFunc
 }
 
 // EpochBalance describes the balance that a specific user has/has in a epoch.
@@ -103,11 +104,6 @@ const (
 	CHAIN_MSG // Chain related message.
 
 	BENCH
-)
-
-const (
-	// How long do we wait for the deposit proof after the deposit phase is over.
-	depositProofGrace = time.Second * 30
 )
 
 // Trust describes how we perceive the operator.
@@ -314,11 +310,11 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		}
 	}()
 	go func() {
-		depEndBlock := c.params.DepositDoneBlock(epoch)
+		depEndBlock := c.params.TxDoneBlock(epoch)
+		c.logOffChain("Waiting for deposit proof until block #%d", depEndBlock)
 		err := c.ethClient.WaitForBlock(ctx, depEndBlock) // Add PowDepth here if needed
 		if err == nil {
 			c.logOffChain("Deposit Phase for Epoch %d ended in block %d", epoch, depEndBlock)
-			time.Sleep(depositProofGrace)
 		}
 		waitErr <- err
 	}()
@@ -359,8 +355,8 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 		status <- &CmdStatus{War: "Deposit proof: Operator timed out - resuming protocol"}
 		c.setOpTrust(UNKNOWN)
 	}
-	// TODO challenge
-	status <- &CmdStatus{Err: errors.New("TODO challenge")}
+
+	c.challengeDeposit(status)
 }
 
 // BalanceProofWatcher waits for the balance proof of an epoch and disputes
@@ -369,7 +365,7 @@ func (c *Client) CmdDeposit(status chan *CmdStatus, args ...string) {
 // Should be started in a go-routine.
 func (c *Client) BalanceProofWatcher() {
 	oldEpoch := uint64(0)
-	for {
+	for !c.IsClosed() {
 		proof, err := c.proofSub.BalanceProof(c.Ctx())
 		if err != nil {
 			c.logProof("Balance Proof error: %v", err)
@@ -395,11 +391,11 @@ func (c *Client) BalanceProofWatcher() {
 	}
 }
 
-// FrozenWatcher listens for Frozen events and calls WithdrawFrozen
+// frozenWatcher listens for Frozen events and calls WithdrawFrozen
 // if a balance proof is available.
-func (c *Client) FrozenWatcher() {
-	ctx, cancel := context.WithCancel(c.Ctx())
-	defer cancel()
+func (c *Client) frozenWatcher() {
+	var ctx context.Context
+	ctx, c.stopFrozenWatcher = context.WithCancel(c.Ctx())
 	sub, err := c.ethClient.SubscribeFrozen(ctx, c.contract, nil)
 	if err != nil {
 		c.logError("Frozen event subscription: %v", err)
@@ -408,6 +404,9 @@ func (c *Client) FrozenWatcher() {
 	defer sub.Unsubscribe()
 
 	select {
+	case <-ctx.Done():
+		c.logOnChain("Frozen watcher stopped")
+		return
 	case err := <-sub.Err():
 		c.logError("Frozen event subscription: %v", err)
 		return
@@ -419,15 +418,8 @@ func (c *Client) FrozenWatcher() {
 func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 	epoch := event.Epoch
 	c.setOpTrust(UNTRUSTED)
-	c.log("❄️ Contract Frozen in epoch #%d", epoch)
+	c.log("❄️Contract Frozen in epoch #%d", epoch)
 
-	c.balMtx.Lock()
-	defer c.balMtx.Unlock()
-	bal, ok := c.balances[epoch]
-	if !ok {
-		c.logOffChain("No balance-proof available for freeze")
-		return
-	}
 	status := make(chan *CmdStatus)
 	defer close(status)
 	go func() {
@@ -439,6 +431,18 @@ func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 			}
 		}
 	}()
+	c.withdrawFrozen(status, epoch)
+}
+
+func (c *Client) withdrawFrozen(status chan *CmdStatus, epoch uint64) {
+	c.balMtx.RLock()
+	bal, ok := c.balances[epoch]
+	c.balMtx.RUnlock()
+	if !ok {
+		c.logOffChain("No balance-proof available for freeze")
+		return
+	}
+
 	_, err := c.sendTx("WithdrawFrozen", func(auth *bind.TransactOpts) (*types.Transaction, error) {
 		return c.contract.WithdrawFrozen(auth, bal.ToEthBal(), bal.Bal.Sig)
 	}, status)
@@ -446,14 +450,14 @@ func (c *Client) handleFrozen(event *bindings.ErdstallFrozen) {
 		status <- &CmdStatus{Err: fmt.Errorf("WithdrawFrozen TX: %w", err)}
 		return
 	}
-	c.log("❄️ WithdrawFrozen: Complete")
+	c.logOnChain("❄️WithdrawFrozen: Complete")
 }
 
 func (c *Client) lastBal() *EpochBalance {
-	c.balMtx.Lock()
-	defer c.balMtx.Unlock()
 	epoch := c.params.ExitEpoch(atomic.LoadUint64(&c.lastBlock))
+	c.balMtx.RLock()
 	bal, ok := c.balances[epoch]
+	c.balMtx.RUnlock()
 	if !ok || bal.Bal == nil || bal.Bal.Sig == nil {
 		return nil
 	}
@@ -494,26 +498,57 @@ func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
 	lastBlock := atomic.LoadUint64(&c.lastBlock)
 	if c.params.IsChallengeResponsePhase(lastBlock + 1) {
 		status <- &CmdStatus{Msg: "Waiting for next epoch"}
-		next := c.params.DepositDoneBlock(c.params.ExitEpoch(lastBlock + 1))
+		next := c.params.DepositDoneBlock(c.params.DepositEpoch(lastBlock + 1))
 		if err := c.ethClient.WaitForBlock(c.Ctx(), next); err != nil {
 			status <- &CmdStatus{Err: err}
 			return
 		}
 	}
 
+	// Get the BP of the sealed epoch.
+	lastBlock = atomic.LoadUint64(&c.lastBlock) + 1
+	sealed := c.params.SealedEpoch(lastBlock)
+	c.balMtx.RLock()
+	bal, ok := c.balances[sealed]
+	c.balMtx.RUnlock()
+	if !ok || bal.Bal == nil {
+		status <- &CmdStatus{Err: fmt.Errorf("No Balance proof available")}
+		return
+	}
+
+	c.challenge(status, bal.Bal)
+}
+
+func (c *Client) challengeDeposit(status chan *CmdStatus) {
+	tx, err := c.sendTx("ChallengeDeposit", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+		return c.contract.ChallengeDeposit(auth)
+	}, status)
+	if err != nil {
+		status <- &CmdStatus{Err: fmt.Errorf("ChallengeDeposit TX: %w", err)}
+		return
+	}
+	c.waitForResponseOrWithdraw(status, tx.BlockNumber.Uint64())
+}
+
+func (c *Client) challenge(status chan *CmdStatus, bp *tee.BalanceProof) {
 	tx, err := c.sendTx("Challenge", func(auth *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.Challenge(auth)
+		return c.contract.Challenge(auth, bp.Balance.ToEthBal(), bp.Sig)
 	}, status)
 	if err != nil {
 		status <- &CmdStatus{Err: fmt.Errorf("Challenge TX: %w", err)}
 		return
 	}
+	c.waitForResponseOrWithdraw(status, tx.BlockNumber.Uint64())
+}
 
+// waitForResponseOrWithdraw waits for a challenge response. If it is not
+// received in time, it freezes the contract and withdraws.
+func (c *Client) waitForResponseOrWithdraw(status chan *CmdStatus, block uint64) {
 	// Wait for the operator til the end of the epoch and Freeze otherwise.
 	status <- &CmdStatus{Msg: "Exiting event: Waiting"}
 	subCtx, cancel := context.WithCancel(c.Ctx())
 	defer cancel()
-	exitEpoch := c.params.ExitEpoch(tx.BlockNumber.Uint64())
+	exitEpoch := c.params.ExitEpoch(block)
 	sub, err := c.ethClient.SubscribeExiting(subCtx, c.contract, []uint64{exitEpoch}, []common.Address{c.Address()})
 	if err != nil {
 		status <- &CmdStatus{Err: fmt.Errorf("Exiting subscription: %w", err)}
@@ -523,22 +558,22 @@ func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
 
 	done := make(chan struct{})
 	go func() {
-		next := c.params.DepositDoneBlock(c.params.DepositEpoch(tx.BlockNumber.Uint64()))
+		next := c.params.DepositDoneBlock(c.params.DepositEpoch(block))
 		c.ethClient.WaitForBlock(subCtx, next) // nolint: errcheck
 		close(done)
 	}()
 
 	select {
 	case <-done: // ChallengeReponse phase is over, freeze.
-		c.log("❄️ Freezing Contract")
-		_, err := c.sendTx("Freeze", func(auth *bind.TransactOpts) (*types.Transaction, error) {
-			return c.contract.Freeze(auth)
+		c.logOnChain("Freezing in epoch %d", exitEpoch)
+		c.stopFrozenWatcher()
+		_, err := c.sendTx("WithdrawChallenge", func(auth *bind.TransactOpts) (*types.Transaction, error) {
+			return c.contract.WithdrawChallenge(auth)
 		}, status)
 		if err != nil {
-			status <- &CmdStatus{Err: fmt.Errorf("Freezing TX: %w", err)}
+			status <- &CmdStatus{Err: fmt.Errorf("WithdrawChallenge TX: %w", err)}
 			return
 		}
-		// The FrozenWatcher will handle the withdrawal from hereon.
 	case err := <-sub.Err():
 		if err != nil {
 			c.logError("Exiting subscription: %v", err)
@@ -587,6 +622,7 @@ func (c *Client) withdraw(exitEpoch uint64, status chan *CmdStatus) {
 	c.logOnChain("Withdraw mined in block #%d", rec.BlockNumber.Uint64())
 	c.events <- &Event{Type: SET_BALANCE, Report: BalanceReport{Balance: big.NewInt(0)}}
 	c.setOpTrust(TRUSTED)
+	c.stopFrozenWatcher()
 }
 
 // writes to chainVvents
@@ -599,7 +635,7 @@ func (c *Client) listenOnChain() error {
 		subError <- c.ethClient.SubscribeEpochs(c.Ctx(), *c.params, epochs, blocks)
 	}()
 	go c.BalanceProofWatcher()
-	go c.FrozenWatcher()
+	go c.frozenWatcher()
 
 	for !c.IsClosed() {
 		select {
