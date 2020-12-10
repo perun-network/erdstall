@@ -241,13 +241,7 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 		return errors.New("getting balance proof")
 	}
 
-	balance := bindings.ErdstallBalance{
-		Epoch:   balanceProof.Balance.Epoch,
-		Account: balanceProof.Balance.Account,
-		Value:   (*big.Int)(balanceProof.Balance.Value),
-	}
-
-	tx, err := operator.contract.Exit(tr, balance, balanceProof.Sig)
+	tx, err := operator.contract.Exit(tr, balanceProof.Balance.ToEthBal(), balanceProof.Sig)
 	if err != nil {
 		return fmt.Errorf("sending challenge response: %w", err)
 	}
