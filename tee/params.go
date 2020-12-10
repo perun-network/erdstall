@@ -33,6 +33,12 @@ func (p Parameters) FreezingEpoch(blockNum uint64) Epoch {
 	return p.epoch(blockNum) - 3
 }
 
+// SealedEpoch returns the sealed epoch at the given block number.
+// It has the same value as `FreezingEpoch`.
+func (p Parameters) SealedEpoch(blockNum uint64) Epoch {
+	return p.epoch(blockNum) - 3
+}
+
 // Don't use this, use the specific FooEpoch methods.
 func (p Parameters) epoch(blockNum uint64) Epoch {
 	return (blockNum - p.InitBlock) / p.PhaseDuration
@@ -53,4 +59,12 @@ func (p Parameters) DepositStartBlock(epoch uint64) uint64 {
 
 func (p Parameters) DepositDoneBlock(epoch uint64) uint64 {
 	return p.DepositStartBlock(epoch) + p.PhaseDuration
+}
+
+func (p Parameters) TxDoneBlock(epoch uint64) uint64 {
+	return p.DepositStartBlock(epoch) + 2*p.PhaseDuration
+}
+
+func (p Parameters) ExitDoneBlock(epoch uint64) uint64 {
+	return p.DepositStartBlock(epoch) + 3*p.PhaseDuration
 }
