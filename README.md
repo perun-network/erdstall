@@ -24,10 +24,10 @@ ganache-cli -e 100000000000000 -b 5 -m "pistol kiwi shrug future ozone ostrich m
 ./operator.bin
 # alice
 ./client.bin --contract 0x4fb8637afd28492a3209017556e95dc2f8086ddb
---account-index 7
+--account-index 2
 # bob
 ./client.bin --contract 0x4fb8637afd28492a3209017556e95dc2f8086ddb
---account-index 6
+--account-index 3
 ```
 
 ## Description

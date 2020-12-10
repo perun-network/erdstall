@@ -4,6 +4,7 @@ go 1.15
 
 require (
 	github.com/ethereum/go-ethereum v1.9.24
+	github.com/go-delve/delve v1.5.0 // indirect
 	github.com/gorilla/websocket v1.4.1-0.20190629185528-ae1634f6a989
 	github.com/jroimartin/gocui v0.4.0
 	github.com/miguelmota/go-ethereum-hdwallet v0.0.0-20200123000308-a60dcd172b4c
@@ -12,5 +13,5 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.7.0
 	github.com/stretchr/testify v1.6.1
-	perun.network/go-perun v0.5.2
+	perun.network/go-perun v0.5.3-0.20201130161943-52ca47c0a417
 )
