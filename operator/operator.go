@@ -19,6 +19,7 @@ import (
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/tee/prototype"
+	"github.com/perun-network/erdstall/tee/rpc"
 )
 
 // Operator resprents a TEE Plasma operator.
@@ -65,27 +66,36 @@ func New(
 	}, nil
 }
 
-// Setup creates an operator from the given configuration.
-func Setup(cfg *Config) *Operator {
+// SetupWithPrototypeEnclave creates an operator from the given configuration
+// using a prototype.Enclave.
+func SetupWithPrototypeEnclave(cfg *Config) *Operator {
 	wallet, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
 	AssertNoError(err)
-
 	enclaveAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.EnclaveDerivationPath)
 	enclaveAccount, err := wallet.Derive(enclaveAccountDerivationPath, true)
 	AssertNoError(err)
+	log.WithField("enclave", enclaveAccount.Address.Hex()).
+		Debug("Operator.Setup: account loaded")
+	enclave := prototype.NewEnclaveWithAccount(wallet, enclaveAccount)
+	return Setup(cfg, enclave)
+}
+
+// Setup creates an operator with the requested enclave. If the
+// enclave is nil, creates a new prototype enclave.
+func Setup(cfg *Config, enclave tee.Enclave) *Operator {
+	wallet, err := hdwallet.NewFromMnemonic(cfg.Mnemonic)
+	AssertNoError(err)
+
+	enclavePublicKey, _, err := enclave.Init()
+	AssertNoError(err)
+	log.Info("Operator.Setup: Enclave created")
 
 	operatorAccountDerivationPath := hdwallet.MustParseDerivationPath(cfg.OperatorDerivationPath)
 	operatorAccount, err := wallet.Derive(operatorAccountDerivationPath, true)
 	AssertNoError(err)
 
 	log.WithFields(log.Fields{
-		"op":      operatorAccount.Address.Hex(),
-		"enclave": enclaveAccount.Address.Hex()}).Info("Operator.Setup: Accounts loaded")
-
-	enclave := prototype.NewEnclaveWithAccount(wallet, enclaveAccount)
-	enclavePublicKey, _, err := enclave.Init()
-	AssertNoError(err)
-	log.Info("Operator.Setup: Enclave created")
+		"op": operatorAccount.Address.Hex()}).Info("Operator.Setup: Accounts loaded")
 
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
@@ -108,6 +118,20 @@ func Setup(cfg *Config) *Operator {
 	AssertNoError(err)
 
 	return operator
+}
+
+// SetupWithRemoteEnclave creates an operator setup that dials the specified remote
+// enclave.
+func SetupWithRemoteEnclave(
+	cfg *Config,
+	enclaveAddr string,
+) (op *Operator, err error) {
+	e, err := rpc.DialEnclave(enclaveAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return Setup(cfg, e), nil
 }
 
 // Serve starts the operator's main routine.

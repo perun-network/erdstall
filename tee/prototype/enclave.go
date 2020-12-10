@@ -59,8 +59,6 @@ const (
 	bufSizeProofs = 1 // proofs buffer size in #epochs
 )
 
-var ErrEnclaveStopped = errors.New("Enclave stopped")
-
 func NewEnclave(wallet accounts.Wallet) *Enclave {
 	return &Enclave{
 		wallet:            wallet,
@@ -129,7 +127,7 @@ func (e *Enclave) Run(params tee.Parameters) error {
 // will continue receiving transactions and blocks until the last block of the
 // current phase is received via ProcessBlocks.
 //
-// The Enclave Interface methods will return an ErrEnclaveStopped error after
+// The Enclave Interface methods will return an tee.ErrEnclaveStopped error after
 // the Enclave shut down.
 func (e *Enclave) Shutdown() {
 	log.Info("Enclave: shutting down when phase is finished")
@@ -178,7 +176,7 @@ func (e *Enclave) ProcessBlocks(blocks ...*tee.Block) error {
 		select {
 		case e.newBlocks <- blockReq{b, err}:
 		case <-e.done:
-			return ErrEnclaveStopped
+			return tee.ErrEnclaveStopped
 		}
 	}
 
@@ -199,7 +197,7 @@ func (e *Enclave) ProcessTXs(txs ...*tee.Transaction) error {
 		select {
 		case e.newTXs <- txReq{tx, err}:
 		case <-e.done:
-			return ErrEnclaveStopped
+			return tee.ErrEnclaveStopped
 		}
 	}
 
@@ -223,7 +221,7 @@ func (e *Enclave) DepositProofs() ([]*tee.DepositProof, error) {
 	case dps := <-e.depositProofs:
 		return dps, nil
 	case <-e.done:
-		return nil, ErrEnclaveStopped
+		return nil, tee.ErrEnclaveStopped
 	}
 }
 
@@ -240,6 +238,6 @@ func (e *Enclave) BalanceProofs() ([]*tee.BalanceProof, error) {
 	case bps := <-e.balanceProofs:
 		return bps, nil
 	case <-e.done:
-		return nil, ErrEnclaveStopped
+		return nil, tee.ErrEnclaveStopped
 	}
 }

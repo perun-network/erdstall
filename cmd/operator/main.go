@@ -23,7 +23,7 @@ func main() {
 	}
 	log.SetLevel(lvl)
 
-	_operator := operator.Setup(cfg)
+	_operator := operator.SetupWithPrototypeEnclave(cfg)
 	err = _operator.Serve(cfg.RPCPort)
 	operator.AssertNoError(err)
 }

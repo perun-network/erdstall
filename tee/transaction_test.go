@@ -23,7 +23,7 @@ func TestTransaction_SignVerify(t *testing.T) {
 	sender, err := w.NewAccount()
 	require.NoError(err)
 
-	contract := ttest.NewRandomAddress(rng)
+	contract := eth.NewRandomAddress(rng)
 
 	tx := ttest.NewTxFrom(rng, sender.Account.Address)
 

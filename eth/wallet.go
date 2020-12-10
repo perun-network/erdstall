@@ -4,9 +4,12 @@ package eth
 
 import (
 	"io"
+	"math/rand"
 
+	"github.com/ethereum/go-ethereum/common"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
+	wtest "perun.network/go-perun/backend/ethereum/wallet/test"
 )
 
 func NewHdWallet(rng io.Reader) *hdwallet.Wallet {
@@ -20,4 +23,9 @@ func NewHdWallet(rng io.Reader) *hdwallet.Wallet {
 		log.Panicf("Error creating random hdwallet: %v", err)
 	}
 	return hdw
+}
+
+// NewRandomAddress creates a new random address.
+func NewRandomAddress(rng *rand.Rand) common.Address {
+	return common.Address(wtest.NewRandomAddress(rng))
 }

@@ -12,6 +12,11 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
+// Transactor executes transactions.
+type Transactor interface {
+	Send(*Transaction) error
+}
+
 // Transaction is a payment transaction from Sender to Recipient, signed by
 // the Sender. The epoch must match the current transaction epoch.
 //
