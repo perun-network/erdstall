@@ -106,13 +106,9 @@ func (u *User) Deposit() {
 		u.Fatal("depositing:", err)
 	}
 
-	r, err := bind.WaitMined(ctx, u.ethClient, tx)
+	r, err := u.ethClient.ConfirmTransaction(ctx, tx, u.ethClient.Account())
 	if err != nil {
 		u.Fatal("waiting for transaction confirmation:", err)
-	}
-
-	if r.Status != types.ReceiptStatusSuccessful {
-		u.Fatal("deposit transaction failed:", err)
 	}
 	log.Debugf("Deposited %d in block %d", u.TargetBalance, r.BlockNumber.Uint64())
 }
@@ -205,12 +201,7 @@ func (u *User) Challenge() {
 		u.Fatal("sending challenge transaction:", err)
 	}
 
-	r, err := bind.WaitMined(ctx, u.ethClient, tx)
-	if err != nil {
+	if _, err = u.ethClient.ConfirmTransaction(ctx, tx, u.ethClient.Account()); err != nil {
 		u.Fatal("waiting for transaction confirmation:", err)
-	}
-
-	if r.Status != types.ReceiptStatusSuccessful {
-		u.Fatal("challenge transaction failed:", err)
 	}
 }

@@ -251,12 +251,9 @@ func (c *Client) call(ctx context.Context, call func(*bind.TransactOpts) (*types
 		return fmt.Errorf("calling contract: %w", err)
 	}
 
-	rec, err := bind.WaitMined(ctx, c.ethClient, tx)
+	rec, err := c.ethClient.ConfirmTransaction(ctx, tx, c.ethClient.Account())
 	if err != nil {
 		return fmt.Errorf("waiting for block containing TX: %w", err)
-	}
-	if rec.Status == types.ReceiptStatusFailed {
-		return fmt.Errorf("execution of contract call failed")
 	}
 	c.SetMinedBlockNum(uint64(rec.BlockNumber.Int64()))
 

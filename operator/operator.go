@@ -251,14 +251,8 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 		ctx, cancel := createOnChainContext()
 		defer cancel()
 
-		r, err := bind.WaitMined(ctx, operator.EthClient.ContractBackend, tx)
-		if err != nil {
+		if _, err := operator.EthClient.ConfirmTransaction(ctx, tx, operator.EthClient.Account()); err != nil {
 			log.Errorf("Operator.handleChallengedEvent: Failed to wait for mining of response to challenge %v: %v", c, err)
-			return
-		}
-
-		if r.Status != types.ReceiptStatusSuccessful {
-			log.Errorf("Operator.handleChallengedEvent: Failed to complete response transaction for challenge %v", c)
 			return
 		}
 
