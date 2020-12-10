@@ -564,14 +564,8 @@ func (c *Client) sendTx(name string, f func(*bind.TransactOpts) (*types.Transact
 		return nil, err
 	}
 	status <- &CmdStatus{Msg: name + " TX: Mining"}
-	receipt, err := bind.WaitMined(txCtx(), c.ethClient, tx)
-	if err != nil {
-		return nil, err
-	}
-	if receipt.Status == types.ReceiptStatusFailed {
-		return nil, errors.New("Receipt failed")
-	}
-	return receipt, nil
+
+	return c.ethClient.ConfirmTransaction(txCtx(), tx, c.ethClient.Account())
 }
 
 func (c *Client) withdraw(exitEpoch uint64, status chan *CmdStatus) {
