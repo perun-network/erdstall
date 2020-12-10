@@ -9,9 +9,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	log "github.com/sirupsen/logrus"
 
@@ -40,8 +38,8 @@ type User struct {
 	nonceCounter      uint64
 	TargetBalance     int64
 	enclaveParameters tee.Parameters
-	dp                tee.DepositProof
-	bp                tee.BalanceProof
+	dps               map[tee.Epoch]tee.DepositProof
+	bps               map[tee.Epoch]tee.BalanceProof
 	epoch             tee.Epoch
 }
 
@@ -86,7 +84,7 @@ func CreateUser(
 		t.Fatal("loading contract:", err)
 	}
 
-	return &User{t, wallet, account, ethClient, rpcClient, sub, contract, contractAddress, 0, 0, enclaveParameters, tee.DepositProof{}, tee.BalanceProof{}, 0}
+	return &User{t, wallet, account, ethClient, rpcClient, sub, contract, contractAddress, 0, 0, enclaveParameters, make(map[tee.Epoch]tee.DepositProof), make(map[tee.Epoch]tee.BalanceProof), 0}
 }
 
 // Deposit deposits the current target balance at the TEE Plasma.
@@ -119,19 +117,19 @@ func (u *User) DepositProof(ctx context.Context) {
 	if err != nil {
 		u.Fatal("calling Subscription.DepositProof:", err)
 	}
-	u.dp = proof
+	u.dps[proof.Balance.Epoch] = proof
 
-	if (*big.Int)(u.dp.Balance.Value).Int64() != u.TargetBalance {
+	if (*big.Int)(proof.Balance.Value).Int64() != u.TargetBalance {
 		u.FailNow()
 	}
 
-	log.Debug("Got deposit proof for epoch #", u.dp.Balance.Epoch)
-	u.epoch = u.dp.Balance.Epoch
+	log.Debug("Got deposit proof for epoch #", proof.Balance.Epoch)
+	u.epoch = proof.Balance.Epoch
 }
 
 // Transfer transfers the specified amount to the specified receiver.
 func (u *User) Transfer(ctx context.Context, receiver *User, amount int64) {
-	log.Debug("Sending transfer in epoch #", u.dp.Balance.Epoch)
+	log.Debug("Sending transfer in epoch #", u.dps[u.epoch].Balance.Epoch)
 	tx := tee.Transaction{
 		Nonce:     u.Nonce(),
 		Epoch:     u.epoch,
@@ -159,14 +157,17 @@ func (u *User) BalanceProof(ctx context.Context) {
 	if err != nil {
 		u.Fatal("calling Subscription.BalanceProof:", err)
 	}
-	u.bp = proof
+	if proof.Sig == nil {
+		u.Fatal("Invalid signature on BalanceProof")
+	}
+	u.bps[proof.Balance.Epoch] = proof
 
-	if balance := (*big.Int)(u.bp.Balance.Value).Int64(); balance != u.TargetBalance {
+	if balance := (*big.Int)(proof.Balance.Value).Int64(); balance != u.TargetBalance {
 		u.Errorf("incorrect balance, got %d, expected %d", balance, u.TargetBalance)
 	}
 
-	log.Debug("Got balance proof for epoch #", u.bp.Balance.Epoch)
-	u.epoch = u.bp.Balance.Epoch + 1
+	log.Debug("Got balance proof for epoch #", proof.Balance.Epoch)
+	u.epoch = proof.Balance.Epoch + 1
 }
 
 // Nonce returns the next nonce.
@@ -196,7 +197,8 @@ func (u *User) Challenge() {
 		u.Fatal("creating transactor:", err)
 	}
 
-	tx, err := u.contract.Challenge(tr)
+	bp := u.bps[u.epoch-1]
+	tx, err := u.contract.Challenge(tr, bp.Balance.ToEthBals(), bp.Sig)
 	if err != nil {
 		u.Fatal("sending challenge transaction:", err)
 	}

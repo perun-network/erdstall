@@ -83,6 +83,7 @@ func TestOperator(t *testing.T) {
 	user1.BalanceProof(ctx)
 	user2.BalanceProof(ctx)
 	log.Info("operator_test.TestOperator: Retrieved balance proofs")
+	environment.WaitPhase() // wait for epoch to be sealed
 
 	// challenge response
 	sub, exitEvents := user1.SubscribeExitEvents()
