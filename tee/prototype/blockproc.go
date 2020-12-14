@@ -15,6 +15,8 @@ func (e *Enclave) blockProcessor(
 ) error {
 	log.Debug("blockProc: starting...")
 
+	var vn uint64 // last verified block number
+
 	process := func(b blockReq) (error, bool) {
 		k := e.params.PowDepth
 
@@ -27,21 +29,32 @@ func (e *Enclave) blockProcessor(
 			return fmt.Errorf("pushing block to local blockchain: %w", err), true
 		}
 
-		// TODO: * Handle Reorgs...
-		//   * Receipts verification
+		// TODO: Receipts verification
 
-		// write verified block (up to PoW-depth) to verifiedBlocks
+		// Now write verified block (up to PoW-depth) to verifiedBlocks
+
 		l := e.bc.Len()
-		if l > k {
-			vblock := e.bc.blocks[l-k-1]
-			log := log.WithField("blockNum", vblock.NumberU64())
-			log.Trace("blockProc: forwarding block to epochProc")
-			verifiedBlocks <- blockReq{block: vblock, result: b.result}
-			if e.params.IsLastPhaseBlock(vblock.NumberU64()) && !e.running.IsSet() {
-				// graceful shutdown
-				log.Info("blockProc: last verified phase block forwarded, shutting down")
-				return nil, true
-			}
+		if l <= k {
+			log.Trace("blockProc: less than k blocks")
+			return nil, false
+		}
+
+		vblock := e.bc.blocks[l-k-1]
+		log := log.WithField("blockNum", vblock.NumberU64())
+		if vn >= vblock.NumberU64() {
+			log.Trace("blockProc: skipping forwarding reorg block to epochProc")
+			return nil, false
+		} else if vn != 0 && vn+1 != vblock.NumberU64() {
+			log.Panic("blockProc: next verified block should increment blockNum by 1")
+		}
+		vn = vblock.NumberU64()
+
+		log.Trace("blockProc: forwarding verified block to epochProc")
+		verifiedBlocks <- blockReq{block: vblock, result: b.result}
+		if e.params.IsLastPhaseBlock(vn) && !e.running.IsSet() {
+			// graceful shutdown
+			log.Info("blockProc: last verified phase block forwarded, shutting down")
+			return nil, true
 		}
 
 		return nil, false
