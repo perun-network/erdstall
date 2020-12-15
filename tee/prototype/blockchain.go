@@ -20,12 +20,21 @@ func (b *blockchain) Head() *tee.Block {
 	return b.blocks[len(b.blocks)-1]
 }
 
+// Block returns the block with the given block number. Panics if not present.
+func (b *blockchain) Block(blockNum uint64) *tee.Block {
+	return b.blocks[blockNum-b.offset]
+}
+
 func (b *blockchain) Len() uint64 {
 	return uint64(len(b.blocks))
 }
 
 // PushVerify pushes the block onto the chain, verifying that it is indeed a
 // correct next block.
+//
+// If the chain's current head has the same or a larger block number, a chain
+// reorg is assumed and the current block becomes the new head, discarding all
+// previous blocks.
 func (b *blockchain) PushVerify(block *tee.Block) error {
 	blockNum := block.NumberU64()
 	if len(b.blocks) == 0 {
@@ -35,16 +44,21 @@ func (b *blockchain) PushVerify(block *tee.Block) error {
 		return nil
 	}
 
-	headNum := b.Head().NumberU64()
-	if headNum+1 != blockNum {
-		return fmt.Errorf("not next block, head: %d, block: %d", headNum, blockNum)
+	prev := b.Head()
+	prevNum := prev.NumberU64()
+	if blockNum > prevNum+1 {
+		return fmt.Errorf("intermediate blocks missing, head: %d, block: %d", prevNum, blockNum)
+	} else if blockNum <= prevNum {
+		// reorg
+		prev = b.Block(blockNum - 1)
+		prevNum = prev.NumberU64()
 	}
 
-	if err := verifyBlock(block, b.Head()); err != nil {
+	if err := verifyBlock(block, prev); err != nil {
 		return fmt.Errorf("verifying block: %v", err)
 	}
 
-	b.blocks = append(b.blocks, block)
+	b.blocks = append(b.blocks[:prevNum+1-b.offset], block)
 	return nil
 }
 
@@ -55,7 +69,7 @@ func (b *blockchain) PruneUntil(blockNum uint64) {
 	}
 
 	diff := blockNum - b.offset
-	b.blocks = b.blocks[diff : len(b.blocks)-1]
+	b.blocks = b.blocks[diff:len(b.blocks)]
 	b.offset = blockNum
 }
 
