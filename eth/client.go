@@ -171,6 +171,9 @@ func (cl *Client) SubscribeEpochs(ctx context.Context, params tee.Parameters, si
 	for {
 		select {
 		case block := <-sub.Blocks():
+			if block == nil {
+				return nil
+			}
 			blockSink <- block.NumberU64()
 			if newEpoch := params.DepositEpoch(block.NumberU64()); newEpoch > oldEpoch {
 				sink <- newEpoch
