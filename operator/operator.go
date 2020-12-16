@@ -12,6 +12,7 @@ import (
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
 	perrors "perun.network/go-perun/pkg/errors"
+	pkgsync "perun.network/go-perun/pkg/sync"
 
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
@@ -22,6 +23,7 @@ import (
 
 // Operator resprents a TEE Plasma operator.
 type Operator struct {
+	pkgsync.Closer
 	enclave   tee.Enclave
 	params    tee.Parameters
 	EthClient *eth.Client
@@ -155,6 +157,9 @@ func (operator *Operator) Serve(port uint16) error {
 	errGo("Op.RPCServe", func() error {
 		rpc := NewRPC(operator.rpcOperator)
 		return rpc.Serve("0.0.0.0", port)
+		operator.OnClose(func() {
+			rpc.Close()
+		})
 	})
 	log.Info("Operator.Serve: RPC handling started")
 
@@ -187,15 +192,19 @@ func (operator *Operator) handleBlocks() error {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}
 	defer blockSub.Unsubscribe()
-	for b := range blockSub.Blocks() {
-		log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
-		if err := operator.enclave.ProcessBlocks(b); err != nil {
-			//TODO check for ErrEnclaveStopped error, see enclave internal tests
-			return err
+	for {
+		select {
+		case b := <-blockSub.Blocks():
+			log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
+			if err := operator.enclave.ProcessBlocks(b); err != nil {
+				//TODO check for ErrEnclaveStopped error, see enclave internal tests
+				return err
+			}
+			log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
+		case <-operator.Closed():
+			return nil
 		}
-		log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
 	}
-	return nil
 }
 
 func (operator *Operator) handleChallenges() error {
@@ -218,6 +227,8 @@ func (operator *Operator) handleChallenges() error {
 			if err := operator.handleChallengedEvent(c); err != nil {
 				log.Errorf("Operator.handleChallenges: Failed to handle challenged event %v: %v", c, err)
 			}
+		case <-operator.Closed():
+			return nil
 		}
 	}
 }
