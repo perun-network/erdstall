@@ -202,11 +202,9 @@ func (c *Client) CmdSend(status chan *CmdStatus, args ...string) {
 }
 
 func (c *Client) createTransfer(receiver common.Address, amount *big.Int) (tee.Transaction, error) {
-	block := atomic.LoadUint64(&c.lastBlock) + 1
-
 	tx := tee.Transaction{
 		Nonce:     c.txNonce,
-		Epoch:     c.params.TxEpoch(block),
+		Epoch:     c.params.TxEpoch(c.ActiveBlock()),
 		Sender:    c.Address(),
 		Recipient: receiver,
 		Amount:    (*tee.Amount)(amount),
@@ -454,7 +452,7 @@ func (c *Client) withdrawFrozen(status chan *CmdStatus, epoch uint64) {
 }
 
 func (c *Client) lastBal() *EpochBalance {
-	epoch := c.params.ExitEpoch(atomic.LoadUint64(&c.lastBlock))
+	epoch := c.params.ExitEpoch(c.LastBlock())
 	c.balMtx.RLock()
 	bal, ok := c.balances[epoch]
 	c.balMtx.RUnlock()
@@ -495,10 +493,10 @@ func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
 	}
 
 	// Wait for the next epoch, when we are currently in the response phase.
-	lastBlock := atomic.LoadUint64(&c.lastBlock)
-	if c.params.IsChallengeResponsePhase(lastBlock + 1) {
+	activeBlock := c.ActiveBlock()
+	if c.params.IsChallengeResponsePhase(activeBlock) {
 		status <- &CmdStatus{Msg: "Waiting for next epoch"}
-		next := c.params.DepositDoneBlock(c.params.DepositEpoch(lastBlock + 1))
+		next := c.params.DepositDoneBlock(c.params.DepositEpoch(activeBlock))
 		if err := c.ethClient.WaitForBlock(c.Ctx(), next); err != nil {
 			status <- &CmdStatus{Err: err}
 			return
@@ -506,8 +504,8 @@ func (c *Client) CmdChallenge(status chan *CmdStatus, args ...string) {
 	}
 
 	// Get the BP of the sealed epoch.
-	lastBlock = atomic.LoadUint64(&c.lastBlock) + 1
-	sealed := c.params.SealedEpoch(lastBlock)
+	activeBlock = c.ActiveBlock()
+	sealed := c.params.SealedEpoch(activeBlock)
 	c.balMtx.RLock()
 	bal, ok := c.balances[sealed]
 	c.balMtx.RUnlock()
@@ -678,6 +676,14 @@ func (c *Client) setOpTrust(trust Trust) {
 
 func (c *Client) Address() common.Address {
 	return c.ethClient.Account().Address
+}
+
+func (c *Client) ActiveBlock() uint64 {
+	return c.LastBlock() + 1
+}
+
+func (c *Client) LastBlock() uint64 {
+	return atomic.LoadUint64(&c.lastBlock)
 }
 
 func strToPerunAddress(str string) (pwallet.Address, error) {
