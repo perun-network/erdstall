@@ -3,6 +3,7 @@
 package operator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,7 +22,8 @@ type (
 	RPCServer struct {
 		pkgsync.Closer
 		perunlog.Embedding
-		op WireAPI
+		op     WireAPI
+		server *http.Server
 
 		mtx   sync.Mutex // protects peers
 		peers []*Peer
@@ -41,16 +43,28 @@ type (
 )
 
 // NewRPC returns a new RPC object. Call Serve to start it.
-func NewRPC(op WireAPI) *RPCServer {
-	rpc := &RPCServer{op: op, Embedding: perunlog.MakeEmbedding(perunlog.WithField("role", "op"))}
-	http.HandleFunc("/ws", rpc.connectionHandler)
+func NewRPC(op WireAPI, host string, port uint16) *RPCServer {
+	m := http.NewServeMux()
+	server := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: m}
+	rpc := &RPCServer{op: op, Embedding: perunlog.MakeEmbedding(perunlog.WithField("role", "op")), server: server}
+	m.HandleFunc("/ws", rpc.connectionHandler)
 	return rpc
 }
 
 // Serve serves RPC requests on the specified host and port.
 // Should be called in a go-routine since it blocks.
-func (r *RPCServer) Serve(host string, port uint16) error {
-	return http.ListenAndServe(fmt.Sprintf("%s:%d", host, port), nil)
+func (r *RPCServer) Serve() error {
+	if !r.OnClose(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		r.server.Shutdown(ctx) // nolint: errcheck
+	}) {
+		panic("Could not add OnClose function")
+	}
+	if err := r.server.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request) {

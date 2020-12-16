@@ -155,11 +155,11 @@ func (operator *Operator) Serve(port uint16) error {
 	operator.rpcOperator = NewRPCOperator(operator.enclave)
 	// Handle RPC
 	errGo("Op.RPCServe", func() error {
-		rpc := NewRPC(operator.rpcOperator)
-		return rpc.Serve("0.0.0.0", port)
+		rpc := NewRPC(operator.rpcOperator, "0.0.0.0", port)
 		operator.OnClose(func() {
 			rpc.Close()
 		})
+		return rpc.Serve()
 	})
 	log.Info("Operator.Serve: RPC handling started")
 
