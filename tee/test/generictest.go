@@ -21,9 +21,15 @@ import (
 	"github.com/perun-network/erdstall/tee"
 )
 
-type clientAction = func(ctx context.Context, bal *tee.BalanceProof) error
+type (
+	clientAction = func(ctx context.Context, bal *tee.BalanceProof) error
 
-func GenericEnclaveTest(t *testing.T, enc tee.Enclave) {
+	EnclaveTestCfg struct {
+		IsCachingEnclave bool // whether the enclave caches future epoch txs
+	}
+)
+
+func GenericEnclaveTest(t *testing.T, enc tee.Enclave, cfg EnclaveTestCfg) {
 	assert, requiree := assert.New(t), require.New(t)
 	_ = assert
 	rng := test.Prng(t)
@@ -124,7 +130,7 @@ func GenericEnclaveTest(t *testing.T, enc tee.Enclave) {
 	requiree.NoError(alice.SendToClient(bob, eth.EthToWeiInt(2)))
 
 	// send invalid txs
-	errs := alice.SendInvalidTxs(rng, bob.Address())
+	errs := alice.SendInvalidTxs(rng, bob.Address(), !cfg.IsCachingEnclave)
 	for i, err := range errs {
 		requiree.Errorf(err, "expected invalid tx #%d", i)
 	}

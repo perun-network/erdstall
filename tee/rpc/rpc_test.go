@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/tee/prototype"
 	ttest "github.com/perun-network/erdstall/tee/test"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	ctxtest "perun.network/go-perun/pkg/context/test"
 	pkgtest "perun.network/go-perun/pkg/test"
@@ -97,5 +98,6 @@ func TestRPCEnclave(t *testing.T) {
 
 	conn, err := l.dial()
 	require.NoError(t, err)
-	ttest.GenericEnclaveTest(t, NewRPCEnclave(conn))
+	cfg := ttest.EnclaveTestCfg{IsCachingEnclave: false}
+	ttest.GenericEnclaveTest(t, NewRPCEnclave(conn), cfg)
 }

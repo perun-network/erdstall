@@ -15,5 +15,6 @@ import (
 func TestEnclave(t *testing.T) {
 	rng := ptest.Prng(t)
 	encWallet := eth.NewHdWallet(rng)
-	ttest.GenericEnclaveTest(t, NewEnclave(encWallet))
+	cfg := ttest.EnclaveTestCfg{IsCachingEnclave: false}
+	ttest.GenericEnclaveTest(t, NewEnclave(encWallet), cfg)
 }

@@ -158,8 +158,8 @@ func (c *Client) SendToClient(recipient *Client, amount *big.Int) error {
 
 // SendInvalidTxs sends several invalid transactions. It uses InvalidTxs, see
 // its documentation for which invalid transactions are used.
-func (c *Client) SendInvalidTxs(rng *rand.Rand, validRecipient common.Address) (errs []error) {
-	for _, tx := range c.InvalidTxs(rng, validRecipient) {
+func (c *Client) SendInvalidTxs(rng *rand.Rand, validRecipient common.Address, optFutureEpoch bool) (errs []error) {
+	for _, tx := range c.InvalidTxs(rng, validRecipient, optFutureEpoch) {
 		errs = append(errs, c.tr.Send(tx))
 	}
 	return errs
@@ -169,12 +169,15 @@ func (c *Client) SendInvalidTxs(rng *rand.Rand, validRecipient common.Address) (
 // of the following fields set to an invalid value:
 // - Sig (random)
 // - Nonce (+-1)
-// - Epoch (+-1)
+// - Epoch (+-1) (+1 optional)
 // - Recipient (random)
 // - Sender (random)
 // - Amount (1 above max, -1)
 // The remaining fields are set to a valid value.
-func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs []*tee.Transaction) {
+//
+// If optFutureEpoch is set, a transaction of a future tx epoch is also sent.
+// This should only be used with non-caching enclaves.
+func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address, optFutureEpoch bool) (txs []*tee.Transaction) {
 	invalidators := []func(*tee.Transaction){
 		func(tx *tee.Transaction) {
 			tx.Sig = make([]byte, 65)
@@ -188,7 +191,7 @@ func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs 
 			tx.Nonce -= 1
 			c.SignTx(tx)
 		},
-		func(tx *tee.Transaction) {
+		func(tx *tee.Transaction) { // skip 3rd if !optFutureEpoch
 			tx.Epoch += 1
 			c.SignTx(tx)
 		},
@@ -216,7 +219,10 @@ func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs 
 		},
 	}
 
-	for _, invalidate := range invalidators {
+	for i, invalidate := range invalidators {
+		if !optFutureEpoch && i == 3 {
+			continue
+		}
 		// set to valid and then invalidate
 		tx := &tee.Transaction{
 			Nonce:     c.Nonce + 1, // only increment locally
