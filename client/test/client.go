@@ -102,11 +102,7 @@ func (c *Client) Deposit(ctx context.Context, amount *big.Int) error {
 // minedBlockNum is updated automatically.
 func (c *Client) Exit(ctx context.Context, bal *tee.BalanceProof) error {
 	err := c.call(ctx, func(tr *bind.TransactOpts) (*types.Transaction, error) {
-		return c.contract.Exit(tr, bindings.ErdstallBalance{
-			Epoch:   bal.Balance.Epoch,
-			Account: bal.Balance.Account,
-			Value:   (*big.Int)(bal.Balance.Value),
-		}, bal.Sig)
+		return c.contract.Exit(tr, bal.Balance.ToEthBal(), bal.Sig)
 	})
 	if err == nil {
 		c.balance.SetUint64(0)
@@ -255,12 +251,9 @@ func (c *Client) call(ctx context.Context, call func(*bind.TransactOpts) (*types
 		return fmt.Errorf("calling contract: %w", err)
 	}
 
-	rec, err := bind.WaitMined(ctx, c.ethClient, tx)
+	rec, err := c.ethClient.ConfirmTransaction(ctx, tx, c.ethClient.Account())
 	if err != nil {
 		return fmt.Errorf("waiting for block containing TX: %w", err)
-	}
-	if rec.Status == types.ReceiptStatusFailed {
-		return fmt.Errorf("execution of contract call failed")
 	}
 	c.SetMinedBlockNum(uint64(rec.BlockNumber.Int64()))
 

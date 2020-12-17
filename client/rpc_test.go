@@ -36,9 +36,9 @@ func TestRPC_ClientOp(t *testing.T) {
 	enclave := optest.NewMockedEnclave()
 	op := optest.NewRPROperator(enclave)
 	op.Run()
-	rpcServer := operator.NewRPC(op)
+	rpcServer := operator.NewRPC(op, "", opRPCPort)
 	go func() {
-		if err := rpcServer.Serve("", opRPCPort); err != nil {
+		if err := rpcServer.Serve(); err != nil {
 			panic(err)
 		}
 	}()

@@ -9,11 +9,10 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
 	perrors "perun.network/go-perun/pkg/errors"
+	pkgsync "perun.network/go-perun/pkg/sync"
 
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
@@ -24,14 +23,15 @@ import (
 
 // Operator resprents a TEE Plasma operator.
 type Operator struct {
+	pkgsync.Closer
 	enclave   tee.Enclave
 	params    tee.Parameters
 	EthClient *eth.Client
 	*depositProofs
 	*balanceProofs
-	rpcOperator       *RPCOperator
-	contract          *bindings.Erdstall
-	respondChallenges bool
+	rpcOperator *RPCOperator
+	contract    *bindings.Erdstall
+	cfg         Config
 }
 
 // EnclaveParams returns the enclave parameters.
@@ -44,25 +44,25 @@ func New(
 	enclave tee.Enclave,
 	params tee.Parameters,
 	client *eth.Client,
-	respondChallenges bool,
+	cfg Config,
 ) (*Operator, error) {
 	_contract, err := bindings.NewErdstall(params.Contract, client)
 	if err != nil {
 		return nil, fmt.Errorf("loading contract: %w", err)
 	}
 
-	if !respondChallenges {
-		log.Warn("Operator will not respond to on-chain challenges.")
+	if !cfg.RespondChallenges || !cfg.SendDepositProofs || !cfg.SendBalanceProofs {
+		log.Warnf("Operator will respond to challenges: %t, send out deposit proofs: %t, send out balance proofs: %t", cfg.RespondChallenges, cfg.SendDepositProofs, cfg.SendBalanceProofs)
 	}
 
 	return &Operator{
-		enclave:           enclave,
-		params:            params,
-		EthClient:         client,
-		depositProofs:     newDepositProofs(),
-		balanceProofs:     newBalanceProofs(),
-		contract:          _contract,
-		respondChallenges: respondChallenges,
+		enclave:       enclave,
+		params:        params,
+		EthClient:     client,
+		depositProofs: newDepositProofs(),
+		balanceProofs: newBalanceProofs(),
+		contract:      _contract,
+		cfg:           cfg,
 	}, nil
 }
 
@@ -114,7 +114,7 @@ func Setup(cfg *Config, enclave tee.Enclave) *Operator {
 	AssertNoError(err)
 	log.Infof("Operator.Setup: Contract deployed at %s", params.Contract.String())
 
-	operator, err := New(enclave, params, client, cfg.RespondChallenges)
+	operator, err := New(enclave, params, client, *cfg)
 	AssertNoError(err)
 
 	return operator
@@ -155,8 +155,11 @@ func (operator *Operator) Serve(port uint16) error {
 	operator.rpcOperator = NewRPCOperator(operator.enclave)
 	// Handle RPC
 	errGo("Op.RPCServe", func() error {
-		rpc := NewRPC(operator.rpcOperator)
-		return rpc.Serve("0.0.0.0", port)
+		rpc := NewRPC(operator.rpcOperator, "0.0.0.0", port)
+		operator.OnClose(func() {
+			rpc.Close()
+		})
+		return rpc.Serve()
 	})
 	log.Info("Operator.Serve: RPC handling started")
 
@@ -189,15 +192,19 @@ func (operator *Operator) handleBlocks() error {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}
 	defer blockSub.Unsubscribe()
-	for b := range blockSub.Blocks() {
-		log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
-		if err := operator.enclave.ProcessBlocks(b); err != nil {
-			//TODO check for ErrEnclaveStopped error, see enclave internal tests
-			return err
+	for {
+		select {
+		case b := <-blockSub.Blocks():
+			log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
+			if err := operator.enclave.ProcessBlocks(b); err != nil {
+				//TODO check for ErrEnclaveStopped error, see enclave internal tests
+				return err
+			}
+			log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
+		case <-operator.Closed():
+			return nil
 		}
-		log.Debugf("Operator.Serve: processed block %d", b.NumberU64())
 	}
-	return nil
 }
 
 func (operator *Operator) handleChallenges() error {
@@ -220,12 +227,14 @@ func (operator *Operator) handleChallenges() error {
 			if err := operator.handleChallengedEvent(c); err != nil {
 				log.Errorf("Operator.handleChallenges: Failed to handle challenged event %v: %v", c, err)
 			}
+		case <-operator.Closed():
+			return nil
 		}
 	}
 }
 
 func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
-	if !operator.respondChallenges {
+	if !operator.cfg.RespondChallenges {
 		log.Warn("Operator.handleChallengedEvent: ignoring challenges, returning.")
 		return nil
 	}
@@ -243,13 +252,7 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 		return errors.New("getting balance proof")
 	}
 
-	balance := bindings.ErdstallBalance{
-		Epoch:   balanceProof.Balance.Epoch,
-		Account: balanceProof.Balance.Account,
-		Value:   (*big.Int)(balanceProof.Balance.Value),
-	}
-
-	tx, err := operator.contract.Exit(tr, balance, balanceProof.Sig)
+	tx, err := operator.contract.Exit(tr, balanceProof.Balance.ToEthBal(), balanceProof.Sig)
 	if err != nil {
 		return fmt.Errorf("sending challenge response: %w", err)
 	}
@@ -259,14 +262,8 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 		ctx, cancel := createOnChainContext()
 		defer cancel()
 
-		r, err := bind.WaitMined(ctx, operator.EthClient.ContractBackend, tx)
-		if err != nil {
+		if _, err := operator.EthClient.ConfirmTransaction(ctx, tx, operator.EthClient.Account()); err != nil {
 			log.Errorf("Operator.handleChallengedEvent: Failed to wait for mining of response to challenge %v: %v", c, err)
-			return
-		}
-
-		if r.Status != types.ReceiptStatusSuccessful {
-			log.Errorf("Operator.handleChallengedEvent: Failed to complete response transaction for challenge %v", c)
 			return
 		}
 
@@ -277,6 +274,11 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 }
 
 func (operator *Operator) handleDepositProofs() error {
+	if !operator.cfg.SendDepositProofs {
+		log.Warn("Ignoring deposit proofs")
+		return nil
+	}
+
 	for {
 		dps, err := operator.enclave.DepositProofs()
 		if err != nil {
@@ -293,6 +295,11 @@ func (operator *Operator) handleDepositProofs() error {
 }
 
 func (operator *Operator) handleBalanceProofs() error {
+	if !operator.cfg.SendDepositProofs {
+		log.Warn("Ignoring balance proofs")
+		return nil
+	}
+
 	for {
 		bps, err := operator.enclave.BalanceProofs()
 		if err != nil {

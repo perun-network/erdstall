@@ -37,7 +37,14 @@ jobs:
         go build -o op ./cmd/operator
         go build -o cl ./cmd/client
 
-    - name: Test
+    - name: Unit Tests
       run: go test -timeout 60s ./...
+      env:
+        ERDSTALL_GANACHE_CMD: docker run --name=chain --rm --net=host trufflesuite/ganache-cli
+
+    - name: Integration Test
+      run: |
+        docker stop chain
+        go test -tags=integration -timeout 600s -v ./client -run TestWalkthroughs
       env:
         ERDSTALL_GANACHE_CMD: docker run --rm --net=host trufflesuite/ganache-cli

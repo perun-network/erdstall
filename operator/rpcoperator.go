@@ -3,6 +3,7 @@
 package operator
 
 import (
+	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -49,6 +50,7 @@ func NewRPCOperator(enclave tee.Enclave) *RPCOperator {
 func (o *RPCOperator) Send(tx tee.Transaction) error {
 	o.mtx.Lock()
 	defer o.mtx.Unlock()
+	log.Infof("Sending %d WEI 0x%s…->0x%s…", (*big.Int)(tx.Amount).Uint64(), tx.Sender.Hex()[:5], tx.Recipient.Hex()[:5])
 	return o.enclave.ProcessTXs(&tx)
 }
 
