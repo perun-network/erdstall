@@ -5,6 +5,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -24,9 +25,6 @@ type (
 		perunlog.Embedding
 		op     WireAPI
 		server *http.Server
-
-		mtx   sync.Mutex // protects peers
-		peers []*Peer
 	}
 
 	// Peer is a connected client.
@@ -80,23 +78,7 @@ func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request)
 	conn.SetCloseHandler(func(int, string) error {
 		return peer.Close()
 	})
-	r.addPeer(peer)
-	peer.OnCloseAlways(func() {
-		r.removePeer(peer)
-	})
 	go peer.readMessages()
-}
-
-func (r *RPCServer) addPeer(p *Peer) {
-	r.mtx.Lock()
-	defer r.mtx.Unlock()
-	r.peers = append(r.peers, p)
-}
-
-func (r *RPCServer) removePeer(p *Peer) {
-	r.mtx.Lock()
-	defer r.mtx.Unlock()
-	r.peers = append(r.peers, p)
 }
 
 func (p *Peer) readMessages() {
@@ -121,6 +103,15 @@ func (p *Peer) readMessages() {
 	}
 }
 
+func (p *Peer) Close() error {
+	if err := p.Closer.Close(); pkgsync.IsAlreadyClosedError(err) {
+		return err
+	}
+	p.conn.Close()
+	p.sub.Unsubscribe()
+	return nil
+}
+
 func (p *Peer) handleCall(id wire.ID, method wire.Method, msg []byte) error {
 	p.Log().Trace("Server received ", string(msg))
 	switch method {
@@ -143,8 +134,9 @@ func (p *Peer) handleCall(id wire.ID, method wire.Method, msg []byte) error {
 
 func (p *Peer) subscribe(who common.Address) error {
 	if p.sub != nil {
-		return fmt.Errorf("subscribed twice to proofs")
+		return errors.New("subscribed twice to proofs")
 	}
+
 	sub, err := p.op.SubscribeProofs(who)
 	if err != nil {
 		return fmt.Errorf("subscribing to proofs: %w", err)
