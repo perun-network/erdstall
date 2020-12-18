@@ -76,7 +76,7 @@ func (c *Client) TxEpoch() tee.Epoch {
 }
 
 func (c *Client) UpdateLastBlockNum() {
-	ctx, cancel := eth.NewDefaultContext()
+	ctx, cancel := eth.ContextNodeReq()
 	defer cancel()
 	h, err := c.ethClient.HeaderByNumber(ctx, nil)
 	if err != nil {

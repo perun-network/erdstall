@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"time"
 
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
@@ -239,17 +238,17 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 		return nil
 	}
 
-	ctx, cancel := createDefaultContext()
+	balanceProof, ok := operator.balanceProofs.Get(c.Account)
+	if !ok {
+		return errors.New("getting balance proof")
+	}
+
+	ctx, cancel := eth.ContextNodeReq()
 	defer cancel()
 
 	tr, err := operator.EthClient.NewTransactor(ctx)
 	if err != nil {
 		return fmt.Errorf("creating transactor: %w", err)
-	}
-
-	balanceProof, ok := operator.balanceProofs.Get(c.Account)
-	if !ok {
-		return errors.New("getting balance proof")
 	}
 
 	tx, err := operator.contract.Exit(tr, balanceProof.Balance.ToEthBal(), balanceProof.Sig)
@@ -259,7 +258,7 @@ func (operator *Operator) handleChallengedEvent(c challengedEvent) error {
 
 	// Track challenge response transaction status
 	go func() {
-		ctx, cancel := createOnChainContext()
+		ctx, cancel := eth.ContextWaitMined()
 		defer cancel()
 
 		if _, err := operator.EthClient.ConfirmTransaction(ctx, tx, operator.EthClient.Account()); err != nil {
@@ -320,16 +319,6 @@ func AssertNoError(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-func createDefaultContext() (context.Context, context.CancelFunc) {
-	//todo: make on-chain context configurable
-	return context.WithTimeout(context.Background(), 10*time.Second)
-}
-
-func createOnChainContext() (context.Context, context.CancelFunc) {
-	//todo: make on-chain context configurable
-	return context.WithTimeout(context.Background(), 60*time.Second)
 }
 
 // challengedEvent provides formatting for bindings.ErdstallChallenged.
