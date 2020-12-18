@@ -190,7 +190,7 @@ func (cl *Client) SubscribeBlocks() (*BlockSubscription, error) {
 	headers := make(chan *types.Header)
 	blocks := make(chan *tee.Block)
 
-	ctx, cancel := NewDefaultContext()
+	ctx, cancel := ContextNodeReq()
 	defer cancel()
 
 	sub, err := cl.SubscribeNewHead(ctx, headers)
@@ -218,7 +218,7 @@ func (cl *Client) SubscribeBlocks() (*BlockSubscription, error) {
 					"hash":     header.Hash().Hex()}).
 					Debugf("EthClient: New header.")
 
-				ctx, cancel := NewDefaultContext()
+				ctx, cancel := ContextNodeReq()
 
 				block, err := cl.BlockByHash(ctx, header.Hash())
 				cancel()
@@ -252,7 +252,7 @@ func (cl *Client) SubscribeBlocksStartingFrom(startBlockNumber *big.Int) (*Block
 	blocks := make(chan *tee.Block)
 	errChan := make(chan error)
 
-	ctx, cancel := NewDefaultContext()
+	ctx, cancel := ContextNodeReq()
 	defer cancel()
 
 	headerSub, err := cl.SubscribeNewHead(ctx, headers)
@@ -409,7 +409,7 @@ func (cl *Client) NextNonce(ctx context.Context) (uint64, error) {
 // DeployContracts deploys the Erdstall contract to the blockchain. It updates
 // the passed parameter's InitBlock and Contract fields.
 func (cl *Client) DeployContracts(params *tee.Parameters) error {
-	ctx, cancel := NewDefaultContext()
+	ctx, cancel := ContextWaitMined()
 	defer cancel()
 
 	tr, err := cl.NewTransactor(ctx)
@@ -495,7 +495,7 @@ func (blockSub *BlockSubscription2) Unsubscribe() {
 }
 
 func (blockSub *BlockSubscription2) pushNextBlock(cl *Client) error {
-	ctx, cancel := NewDefaultContext()
+	ctx, cancel := ContextNodeReq()
 	defer cancel()
 
 	block, err := cl.ContractBackend.BlockByNumber(ctx, blockSub.nextBlockNumber)

@@ -235,5 +235,7 @@ func newDefaultConfig() *op.Config {
 		true,
 		true,
 		true,
+		0,
+		0,
 	}
 }
