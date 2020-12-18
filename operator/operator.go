@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	log "github.com/sirupsen/logrus"
 	perrors "perun.network/go-perun/pkg/errors"
@@ -102,16 +103,30 @@ func Setup(cfg *Config, enclave tee.Enclave) *Operator {
 	AssertNoError(err)
 	log.Info("Operator.Setup: Ethereum client initialized")
 
-	params := tee.Parameters{
-		TEE:              enclavePublicKey,
-		PhaseDuration:    cfg.PhaseDuration,
-		ResponseDuration: cfg.ResponseDuration,
-		PowDepth:         cfg.PowDepth,
+	var params tee.Parameters
+	if cfg.ContractAddr != "" {
+		if !common.IsHexAddress(cfg.ContractAddr) {
+			log.Fatalf("Config: No hex address: %s", cfg.ContractAddr)
+		}
+		contract := common.HexToAddress(cfg.ContractAddr)
+		log.Infof("Operator.Setup: Binding contract at %s", contract.String())
+		ctx, cancel := eth.ContextNodeReq()
+		defer cancel()
+		p, _, err := client.BindContract(ctx, contract)
+		AssertNoError(err)
+		params = *p
+	} else {
+		log.Infof("Operator.Setup: Depolying contract...")
+		params = tee.Parameters{
+			TEE:              enclavePublicKey,
+			PhaseDuration:    cfg.PhaseDuration,
+			ResponseDuration: cfg.ResponseDuration,
+			PowDepth:         cfg.PowDepth,
+		}
+		err = client.DeployContracts(&params)
+		AssertNoError(err)
+		log.Infof("Operator.Setup: Contract deployed at %s", params.Contract.String())
 	}
-
-	err = client.DeployContracts(&params)
-	AssertNoError(err)
-	log.Infof("Operator.Setup: Contract deployed at %s", params.Contract.String())
 
 	operator, err := New(enclave, params, client, *cfg)
 	AssertNoError(err)

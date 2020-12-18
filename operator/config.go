@@ -14,6 +14,7 @@ import (
 // Config represents the operator's configuration.
 type Config struct {
 	EthereumNodeURL        string
+	ContractAddr           string
 	Mnemonic               string
 	EnclaveDerivationPath  string
 	OperatorDerivationPath string
