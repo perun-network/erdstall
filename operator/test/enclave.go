@@ -4,13 +4,12 @@ package test
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	perunlog "perun.network/go-perun/log"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/perun-network/erdstall/tee"
 )
 
 type Enclave struct {
-	perunlog.Embedding
 	processTXsError error
 	txs             chan *tee.Transaction
 
@@ -22,12 +21,15 @@ var _ tee.Enclave = (*Enclave)(nil)
 
 func NewMockedEnclave() *Enclave {
 	return &Enclave{
-		Embedding: perunlog.MakeEmbedding(perunlog.WithField("role", "enclave")),
 		// Buffer some TX to make testing easier.
 		txs:  make(chan *tee.Transaction, 10),
 		deps: make(chan *tee.DepositProof, 10),
 		bals: make(chan *tee.BalanceProof, 10),
 	}
+}
+
+func (e *Enclave) Log() *log.Entry {
+	return log.WithField("role", "enclave")
 }
 
 func (e *Enclave) Init() (common.Address, []byte, error) {

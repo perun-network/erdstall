@@ -14,17 +14,17 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	gorilla "github.com/gorilla/websocket"
+	log "github.com/sirupsen/logrus"
+	pkgsync "perun.network/go-perun/pkg/sync"
+
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/wire"
-	perunlog "perun.network/go-perun/log"
-	pkgsync "perun.network/go-perun/pkg/sync"
 )
 
 type (
 	// RPC connects the client with the operator over websockets.
 	RPC struct {
 		pkgsync.Closer
-		perunlog.Embedding
 
 		connMtx sync.Mutex // protects conn.send.
 		conn    *gorilla.Conn
@@ -39,7 +39,6 @@ type (
 	// Subscription is returned by Subscribe() and can be used to iterate
 	// over the deposit and balance proofs.
 	Subscription struct {
-		perunlog.Embedding
 		// deposit proofs from the OP will be written into this channel.
 		depProofs chan tee.DepositProof
 		// balance proofs from the OP will be written into this channel.
@@ -64,7 +63,6 @@ func NewRPC(host string, port uint16) (*RPC, error) {
 	rpc := &RPC{
 		conn:      conn,
 		callbacks: make(map[wire.ID]callback),
-		Embedding: perunlog.MakeEmbedding(perunlog.WithField("role", "client")),
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return nil, err
@@ -76,6 +74,10 @@ func NewRPC(host string, port uint16) (*RPC, error) {
 	go rpc.handleConnections()
 
 	return rpc, nil
+}
+
+func (r *RPC) Log() *log.Entry {
+	return log.WithField("role", "client")
 }
 
 // SendTx sends one transaction to the operator.
@@ -109,7 +111,6 @@ func (r *RPC) SendTx(ctx context.Context, tx tee.Transaction) error {
 // error will cause undefined behaviour.
 func (r *RPC) Subscribe(ctx context.Context, user common.Address) (*Subscription, error) {
 	r.subscription = &Subscription{
-		Embedding: perunlog.MakeEmbedding(perunlog.WithField("role", "proofSub")),
 		// Buffer the proofs here, otherwise the client has to read them
 		// immediately to prevent that they get reordered by a race condition
 		// from the go-routines writing them to the channel since a mutex is
@@ -209,6 +210,10 @@ func (r *RPC) sendJSON(obj interface{}) error {
 	r.connMtx.Lock()
 	defer r.connMtx.Unlock()
 	return r.conn.WriteJSON(obj)
+}
+
+func (r *Subscription) Log() *log.Entry {
+	return log.WithField("role", "proofSub")
 }
 
 func (s *Subscription) handleTopic(topic wire.Topic, data []byte) {
