@@ -13,16 +13,16 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	gorilla "github.com/gorilla/websocket"
-	"github.com/perun-network/erdstall/wire"
-	perunlog "perun.network/go-perun/log"
+	log "github.com/sirupsen/logrus"
 	pkgsync "perun.network/go-perun/pkg/sync"
+
+	"github.com/perun-network/erdstall/wire"
 )
 
 type (
 	// RPCServer handels RPC requests and forwards them to the enclave.
 	RPCServer struct {
 		pkgsync.Closer
-		perunlog.Embedding
 		op     WireAPI
 		server *http.Server
 	}
@@ -30,7 +30,6 @@ type (
 	// Peer is a connected client.
 	Peer struct {
 		pkgsync.Closer
-		perunlog.Embedding
 		op WireAPI
 
 		connMtx sync.Mutex // protects conn.
@@ -44,9 +43,13 @@ type (
 func NewRPC(op WireAPI, host string, port uint16) *RPCServer {
 	m := http.NewServeMux()
 	server := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: m}
-	rpc := &RPCServer{op: op, Embedding: perunlog.MakeEmbedding(perunlog.WithField("role", "op")), server: server}
+	rpc := &RPCServer{op: op, server: server}
 	m.HandleFunc("/ws", rpc.connectionHandler)
 	return rpc
+}
+
+func (r *RPCServer) Log() *log.Entry {
+	return log.WithField("role", "op")
 }
 
 // Serve serves RPC requests on the specified host and port.
@@ -73,12 +76,15 @@ func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request)
 		return
 	}
 
-	peer := &Peer{conn: conn, op: r.op,
-		Embedding: perunlog.MakeEmbedding(perunlog.WithField("role", "peer"))}
+	peer := &Peer{conn: conn, op: r.op}
 	conn.SetCloseHandler(func(int, string) error {
 		return peer.Close()
 	})
 	go peer.readMessages()
+}
+
+func (p *Peer) Log() *log.Entry {
+	return log.WithField("role", "peer")
 }
 
 func (p *Peer) readMessages() {
