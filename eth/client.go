@@ -34,6 +34,9 @@ type (
 	Client struct {
 		peruneth.ContractBackend
 		account accounts.Account
+		params  tee.Parameters
+
+		onlyErdstallReceipts bool
 	}
 
 	// BlockSubscription represents a subscription to Ethereum blocks.
@@ -67,7 +70,7 @@ func NewClient(
 	cb peruneth.ContractBackend,
 	a accounts.Account,
 ) *Client {
-	return &Client{cb, a}
+	return &Client{ContractBackend: cb, account: a}
 }
 
 // NewClientForWalletAndAccount creates a new Erdstall Ethereum client for the
@@ -79,7 +82,7 @@ func NewClientForWalletAndAccount(
 ) *Client {
 	tr := NewDefaultTransactor(w)
 	cb := peruneth.NewContractBackend(ci, tr)
-	return &Client{cb, a}
+	return &Client{ContractBackend: cb, account: a}
 }
 
 // NewClientForWallet returns a new Client using the given wallet as transactor.
@@ -101,6 +104,12 @@ func NewClientForWallet(
 	cb := peruneth.NewContractBackend(ci, tr)
 
 	return NewClient(cb, acc.Account), nil
+}
+
+// OnlyErdstallReceipts can be called during client setup to skip requesting
+// transaction receipts. This affects all methods that create tee.Blocks.
+func (cl *Client) OnlyErdstallReceipts() {
+	cl.onlyErdstallReceipts = true
 }
 
 // NewTransactor creates a new transactor.
@@ -387,6 +396,9 @@ func (cl *Client) BlockByHash(ctx context.Context, hash common.Hash) (*tee.Block
 func (cl *Client) TransactionReceipts(ctx context.Context, block *types.Block) (types.Receipts, error) {
 	var receipts []*types.Receipt
 	for _, t := range block.Transactions() {
+		if cl.onlyErdstallReceipts && ((t.To() == nil) || (*t.To() != cl.params.Contract)) {
+			continue
+		}
 		r, err := cl.TransactionReceipt(ctx, t.Hash())
 		if err != nil {
 			return nil, fmt.Errorf("retrieving receipt: %w", err)
@@ -438,6 +450,7 @@ func (cl *Client) DeployContracts(params *tee.Parameters) error {
 	}
 	params.InitBlock = receipt.BlockNumber.Uint64()
 
+	cl.params = *params
 	return nil
 }
 
@@ -463,14 +476,15 @@ func (cl *Client) BindContract(ctx context.Context, addr common.Address) (*tee.P
 	if err != nil {
 		return nil, nil, err
 	}
-	return &tee.Parameters{
+	cl.params = tee.Parameters{
 		PowDepth:         defaultPowDepth,
 		PhaseDuration:    phaseDuration,
 		ResponseDuration: responseDuration,
 		InitBlock:        bigBang,
 		TEE:              teeAddr,
 		Contract:         addr,
-	}, contract, nil
+	}
+	return &cl.params, contract, nil
 }
 
 // Blocks returns the channel on which to receive subscribed blocks.

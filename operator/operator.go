@@ -51,10 +51,6 @@ func New(
 		return nil, fmt.Errorf("loading contract: %w", err)
 	}
 
-	if !cfg.RespondChallenges || !cfg.SendDepositProofs || !cfg.SendBalanceProofs {
-		log.Warnf("Operator will respond to challenges: %t, send out deposit proofs: %t, send out balance proofs: %t", cfg.RespondChallenges, cfg.SendDepositProofs, cfg.SendBalanceProofs)
-	}
-
 	return &Operator{
 		enclave:       enclave,
 		params:        params,
@@ -101,6 +97,9 @@ func Setup(cfg *Config, enclave tee.Enclave) *Operator {
 	defer cancel()
 	client, err := eth.CreateEthereumClient(ctx, cfg.EthereumNodeURL, wallet, operatorAccount)
 	AssertNoError(err)
+	// Skip retrieving other receipts as they're currently not checked in the
+	// prototype enclave...
+	client.OnlyErdstallReceipts()
 	log.Info("Operator.Setup: Ethereum client initialized")
 
 	var params tee.Parameters
@@ -116,7 +115,7 @@ func Setup(cfg *Config, enclave tee.Enclave) *Operator {
 		AssertNoError(err)
 		params = *p
 	} else {
-		log.Infof("Operator.Setup: Depolying contract...")
+		log.Infof("Operator.Setup: Deploying contract...")
 		params = tee.Parameters{
 			TEE:              enclavePublicKey,
 			PhaseDuration:    cfg.PhaseDuration,
@@ -126,6 +125,12 @@ func Setup(cfg *Config, enclave tee.Enclave) *Operator {
 		err = client.DeployContracts(&params)
 		AssertNoError(err)
 		log.Infof("Operator.Setup: Contract deployed at %s", params.Contract.String())
+	}
+
+	if !cfg.RespondChallenges || !cfg.SendDepositProofs || !cfg.SendBalanceProofs {
+		log.Warnf(
+			"Operator will respond to challenges: %t, send out deposit proofs: %t, send out balance proofs: %t",
+			cfg.RespondChallenges, cfg.SendDepositProofs, cfg.SendBalanceProofs)
 	}
 
 	operator, err := New(enclave, params, client, *cfg)
