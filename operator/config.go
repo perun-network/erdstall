@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/perun-network/erdstall/eth"
 )
 
 // Config represents the operator's configuration.
@@ -23,6 +25,8 @@ type Config struct {
 	RespondChallenges      bool
 	SendDepositProofs      bool
 	SendBalanceProofs      bool
+	NodeReqTimeout         uint64 // Node request timeout in seconds.
+	WaitMinedTimeout       uint64 // Transaction mining timeout in seconds.
 }
 
 // dialTimeout will be used a timeout when dialing to the ethereum node.
@@ -39,6 +43,13 @@ func LoadConfig(path string) (*Config, error) {
 	err = json.Unmarshal(fileContent, &config)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling: %w", err)
+	}
+
+	if config.NodeReqTimeout != 0 {
+		eth.SetNodeReqTimeout(time.Duration(config.NodeReqTimeout) * time.Second)
+	}
+	if config.WaitMinedTimeout != 0 {
+		eth.SetWaitMinedTimeout(time.Duration(config.WaitMinedTimeout) * time.Second)
 	}
 
 	return &config, nil
