@@ -23,6 +23,8 @@ type Config struct {
 	PowDepth               uint64
 	RPCPort                uint16
 	RPCHost                string
+	KeyFile                string
+	CertFile               string
 	RespondChallenges      bool
 	SendDepositProofs      bool
 	SendBalanceProofs      bool

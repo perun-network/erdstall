@@ -196,7 +196,7 @@ func (operator *Operator) Serve(port uint16) error {
 
 	// Handle RPC
 	errGo("Op.RPCServe", func() error {
-		rpc := NewRPC(operator.rpcOperator, "0.0.0.0", port)
+		rpc := NewRPC(operator.rpcOperator, opserver)
 		operator.OnClose(func() {
 			rpc.Close()
 		})
