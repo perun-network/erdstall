@@ -28,7 +28,7 @@ func TestErdstallBindings(t *testing.T) {
 	defer cancel()
 
 	params := &tee.Parameters{TEE: s.Accounts[0].Address, PhaseDuration: 3, ResponseDuration: 1}
-	erdstall, err := deployErdstall(ctx, params, eth.NewClient(*s.CB, s.Accounts[0]))
+	erdstall, err := deployErdstall(ctx, params, eth.NewClient(*s.CB, s.Accounts[0], nil))
 	require.NoError(t, err)
 	require.NotNil(t, erdstall)
 	opts := &bind.CallOpts{Context: ctx}
