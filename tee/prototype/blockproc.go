@@ -18,7 +18,7 @@ func (e *Enclave) blockProcessor(
 	var vn uint64 // last verified block number
 
 	process := func(b blockReq) (error, bool) {
-		k := e.params.PowDepth
+		k := uint64(0) //e.params.PowDepth
 
 		if n := b.block.NumberU64(); e.bc.Len() == 0 && e.params.InitBlock != n {
 			return fmt.Errorf("first block (%d) not initial Erdstall block (%d)", n, e.params.InitBlock), true
