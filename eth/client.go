@@ -48,10 +48,9 @@ type (
 
 	// BlockSubscription2 represents a subscription to Ethereum blocks, version 2.
 	BlockSubscription2 struct {
-		headerSub       ethereum.Subscription
-		blocks          chan *tee.Block
-		err             chan error
-		nextBlockNumber *big.Int
+		headerSub ethereum.Subscription
+		blocks    chan *tee.Block
+		err       chan error
 	}
 
 	ExitingSubscription struct {
@@ -254,9 +253,12 @@ func (cl *Client) SubscribeBlocks() (*BlockSubscription, error) {
 	return &BlockSubscription{sub, blocks, quit}, nil
 }
 
-// SubscribeBlocksStartingFrom subscribes the client to the mined Ethereum
-// blocks starting from the given block number.
-func (cl *Client) SubscribeBlocksStartingFrom(startBlockNumber *big.Int) (*BlockSubscription2, error) {
+// SubscribeVerifiedBlocksFrom subscribes the client to newly mined blocks
+// starting from the given block number.
+//
+// It only pushes blocks onto the subscription that are pow-depth deep from the
+// tip of the chain.
+func (cl *Client) SubscribeVerifiedBlocksFrom(start uint64) (*BlockSubscription2, error) {
 	headers := make(chan *types.Header)
 	blocks := make(chan *tee.Block)
 	errChan := make(chan error)
@@ -269,17 +271,22 @@ func (cl *Client) SubscribeBlocksStartingFrom(startBlockNumber *big.Int) (*Block
 		return nil, fmt.Errorf("subscribing to blockchain head: %w", err)
 	}
 
-	blockSub := &BlockSubscription2{headerSub, blocks, errChan, startBlockNumber}
+	blockSub := &BlockSubscription2{headerSub, blocks, errChan}
 
 	run := func() error {
+		var (
+			tip      = start - 1 // tip block number
+			verified = start     // last verified block number
+		)
+
 		for {
 			select {
 			case err := <-headerSub.Err():
+				log.Debug("EthClient: Header subscription closed")
+				close(blocks)
 				if err != nil {
 					return fmt.Errorf("subscription error: %w", err)
 				}
-				log.Debug("EthClient: Header subscription closed")
-				close(blocks)
 				return nil
 
 			case header := <-headers:
@@ -288,22 +295,38 @@ func (cl *Client) SubscribeBlocksStartingFrom(startBlockNumber *big.Int) (*Block
 					"hash":     header.Hash().Hex()}).
 					Debugf("EthClient: New header.")
 
-				for blockSub.nextBlockNumber.Cmp(header.Number) < 0 {
-					if err := blockSub.pushNextBlock(cl); err != nil {
-						return fmt.Errorf("pushing block: %w", err)
-					}
+				newtip := header.Number.Uint64()
+				if newtip+cl.params.PowDepth < tip {
+					log.Warnf("reorg larger than powdepth from %d back to %d", tip, newtip)
+					continue // big reorg
+				} else if newtip <= tip {
+					log.Debugf("normal reorg to %d", newtip)
+					continue // normal reorg
+				} else if newtip > tip+1 {
+					log.Warnf("new header jump from %d to %d", tip, newtip)
+				}
+				log.Debugf("new tip %d", newtip)
+				tip = newtip // equivalent to tip++ unless header jump
+
+				newverified := tip - cl.params.PowDepth
+				if newverified < start {
+					log.Debugf("new verified tip %d before start", newverified)
+					continue // pow-depth not reached yet
 				}
 
-				if err := blockSub.pushNextBlock(cl); err != nil {
-					return fmt.Errorf("pushing block: %w", err)
+				for ; verified <= newverified; verified++ {
+					// usually loops only a single time unless there was a header jump
+					log.Debugf("pushing new verified block %d", verified)
+					if err := blockSub.pushNextBlock(cl, verified); err != nil {
+						return fmt.Errorf("pushing block #%d: %w", verified, err)
+					}
 				}
 			}
 		}
 	}
 
 	go func() {
-		err := run()
-		errChan <- err
+		errChan <- run()
 	}()
 
 	return blockSub, nil
@@ -508,13 +531,13 @@ func (blockSub *BlockSubscription2) Unsubscribe() {
 	blockSub.headerSub.Unsubscribe()
 }
 
-func (blockSub *BlockSubscription2) pushNextBlock(cl *Client) error {
+func (blockSub *BlockSubscription2) pushNextBlock(cl *Client, blockNum uint64) error {
 	ctx, cancel := ContextNodeReq()
 	defer cancel()
 
-	block, err := cl.ContractBackend.BlockByNumber(ctx, blockSub.nextBlockNumber)
+	block, err := cl.ContractBackend.BlockByNumber(ctx, big.NewInt(int64(blockNum)))
 	if err != nil {
-		return fmt.Errorf("retrieving block by number: %w", err)
+		return fmt.Errorf("retrieving block %d: %w", blockNum, err)
 	}
 
 	receipts, err := cl.TransactionReceipts(ctx, block)
@@ -522,9 +545,8 @@ func (blockSub *BlockSubscription2) pushNextBlock(cl *Client) error {
 		return fmt.Errorf("retrieving block receipts: %w", err)
 	}
 
-	log.Tracef("eth.Client: Pushing block number %d", block.NumberU64())
+	log.Tracef("eth.Client: Pushing block number %d", blockNum)
 
 	blockSub.blocks <- &tee.Block{Block: *block, Receipts: receipts}
-	blockSub.nextBlockNumber = new(big.Int).Add(blockSub.nextBlockNumber, big.NewInt(1))
 	return nil
 }

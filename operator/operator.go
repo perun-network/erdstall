@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
@@ -202,11 +201,7 @@ func (operator *Operator) Serve(port uint16) error {
 }
 
 func (operator *Operator) handleBlocks() error {
-	bigBang, err := operator.contract.BigBang(nil)
-	if err != nil {
-		return fmt.Errorf("reading BigBang: %w", err)
-	}
-	blockSub, err := operator.EthClient.SubscribeBlocksStartingFrom(new(big.Int).SetUint64(bigBang))
+	blockSub, err := operator.EthClient.SubscribeVerifiedBlocksFrom(operator.params.InitBlock)
 	if err != nil {
 		return fmt.Errorf("creating block subscription: %w", err)
 	}
