@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/ethereum/go-ethereum/common"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
@@ -176,6 +177,23 @@ func (operator *Operator) Serve(port uint16) error {
 	log.Info("Operator.Serve: Enclave running")
 
 	operator.rpcOperator = NewRPCOperator(operator.enclave)
+
+	clientConfig := ClientConfig{
+		Contract:  operator.params.Contract,
+		NetworkID: operator.EthClient.NetworkID.String(),
+		POWDepth:  operator.params.PowDepth,
+	}
+	osc := OpServerConfig{
+		Host:         "0.0.0.0",
+		Port:         port,
+		CertFilePath: operator.cfg.CertFile,
+		KeyFilePath:  operator.cfg.KeyFile,
+		ClientConfig: clientConfig,
+	}
+
+	m := http.NewServeMux()
+	opserver := NewOpServer(osc, m)
+
 	// Handle RPC
 	errGo("Op.RPCServe", func() error {
 		rpc := NewRPC(operator.rpcOperator, "0.0.0.0", port)
