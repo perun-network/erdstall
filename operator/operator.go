@@ -209,7 +209,7 @@ func (operator *Operator) handleBlocks() error {
 	for {
 		select {
 		case b := <-blockSub.Blocks():
-			log.Debugf("Operator.Serve: incoming block %d", b.NumberU64())
+			log.Infof("Operator.Serve: incoming block %d", b.NumberU64())
 			if err := operator.enclave.ProcessBlocks(b); err != nil {
 				//TODO check for ErrEnclaveStopped error, see enclave internal tests
 				return err
