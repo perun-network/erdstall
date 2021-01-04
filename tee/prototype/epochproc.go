@@ -34,6 +34,7 @@ func (e *Enclave) epochProcessor(
 	// push first epoch
 	e.epochs.Push(depositEpoch)
 
+	defer close(e.done) // Signal to external callers that Enclave processor is done.
 	for {
 		numProcs := 2
 		log := log.WithField("depositEpoch", depositEpoch.Number)
@@ -66,7 +67,6 @@ func (e *Enclave) epochProcessor(
 
 		if !e.running.IsSet() {
 			log.Info("epochProcessor: routines returned, shutting down")
-			close(e.done) // signal to external callers that Enclave processes are done.
 			return nil
 		}
 
