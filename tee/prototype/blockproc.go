@@ -63,6 +63,9 @@ func (e *Enclave) blockProcessor(
 	for b := range newBlocks {
 		err, shutdown := process(b)
 		b.result <- err
+		if err != nil {
+			close(e.blockFail)
+		}
 		if err != nil || shutdown {
 			return err
 		}

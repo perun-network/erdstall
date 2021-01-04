@@ -53,6 +53,8 @@ func (e *Enclave) epochProcessor(
 		log.Debug("epochProcessor: waiting for depositExitRoutine and txRoutine...")
 		for numProcs != 0 {
 			select {
+			case <-e.blockFail:
+				return errors.New("block processor failed")
 			case err := <-depExErr:
 				if err != nil {
 					return fmt.Errorf("depositExitRoutine: %w", err)
