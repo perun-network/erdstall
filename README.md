@@ -30,6 +30,14 @@ ganache-cli -e 100000000000000 -b 5 -m "pistol kiwi shrug future ozone ostrich m
 --account-index 3
 ```
 
+### Configuration file
+
+With the command line flag `-config <file>`, you can specify a JSON
+configuration file. In this file, you can override the default settings. For
+reference, see `demo/config.json`. If you wish to enable TLS support for the
+websocket connection, set the fields `KeyFile` to the TLS private key file path,
+and `CertFile` to the TLS certificate file path.
+
 ## Description
 
 Erdstall leverages Trusted Execution Environments (TEE) like Intel SGX (or even

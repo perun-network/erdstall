@@ -8,8 +8,6 @@
 	"PowDepth": 0,
 	"RpcPort": 8401,
 	"RpcHost": "0.0.0.0",
-        "KeyFile": "/etc/letsencrypt/live/demo.erdstall.dev/privkey.pem",
-        "CertFile": "/etc/letencrypt/live/demo.erdstall.dev/cert.pem",
 	"RespondChallenges": true,
 	"SendDepositProofs": true,
 	"SendBalanceProofs": true
