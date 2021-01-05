@@ -41,7 +41,7 @@ func GenericEnclaveTest(t *testing.T, enc tee.Enclave) {
 	// Setup blockchain and accounts
 	setup := eth.NewSimSetup(rng, 3) // 1 Operator + 2 Clients
 	operatorAd, aliceAd, bobAd := setup.Accounts[0], setup.Accounts[1], setup.Accounts[2]
-	operator := eth.NewClient(*setup.CB, operatorAd, nil)
+	operator := eth.NewClient(*setup.CB, operatorAd)
 
 	seal := func(phase string, n uint64) {
 		testLog("Adding %d new blocks to seal %s.", n, phase)
@@ -76,10 +76,10 @@ func GenericEnclaveTest(t *testing.T, enc tee.Enclave) {
 
 	// Create clients
 	encTr := &ctest.EnclaveTransactor{Enclave: enc} // transact directly on the enclave, bypassing the operator
-	aliceEthCl := eth.NewClient(*setup.CB, aliceAd, nil)
+	aliceEthCl := eth.NewClient(*setup.CB, aliceAd)
 	alice, err := ctest.NewClient(params, setup.HdWallet, aliceEthCl, encTr)
 	require.NoError(t, err)
-	bobEthCl := eth.NewClient(*setup.CB, bobAd, nil)
+	bobEthCl := eth.NewClient(*setup.CB, bobAd)
 	bob, err := ctest.NewClient(params, setup.HdWallet, bobEthCl, encTr)
 	require.NoError(t, err)
 

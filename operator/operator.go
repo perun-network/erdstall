@@ -177,9 +177,14 @@ func (operator *Operator) Serve(port uint16) error {
 
 	operator.rpcOperator = NewRPCOperator(operator.enclave)
 
+	netID, err := operator.EthClient.NetworkID()
+	if err != nil {
+		return fmt.Errorf("Retrieving network ID: %w", err)
+	}
+
 	clientConfig := ClientConfig{
 		Contract:  operator.params.Contract,
-		NetworkID: operator.EthClient.NetworkID.String(),
+		NetworkID: netID.String(),
 		POWDepth:  operator.params.PowDepth,
 	}
 	osc := OpServerConfig{

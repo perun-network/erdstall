@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		log.WithError(err).Panicf("Connecting to the operator failed.")
 	}
-	chain := eth.NewClient(cb, wallet.Acc.Account, nil)         // ETHChain conn
+	chain := eth.NewClient(cb, wallet.Acc.Account)              // ETHChain conn
 	client := client.NewClient(cfg, rpc, events, chain, wallet) // Erdstall protocol client
 	go gui.RunGui(client, events)                               // Run the GUI
 

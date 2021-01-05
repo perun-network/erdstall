@@ -178,7 +178,7 @@ func startClient(index int, contract common.Address) (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	chain := eth.NewClient(cb, wallet.Acc.Account, nil) // ETHChain conn
+	chain := eth.NewClient(cb, wallet.Acc.Account) // ETHChain conn
 	log.Info(cfg.UserName, " address: ", wallet.Acc.Address())
 	client := client.NewClient(cfg, rpc, events, chain, wallet)
 	go func() {

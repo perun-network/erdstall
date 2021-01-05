@@ -4,6 +4,7 @@ package eth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -37,7 +38,6 @@ type (
 		params  tee.Parameters
 
 		onlyErdstallReceipts bool
-		NetworkID            *big.Int
 	}
 
 	// BlockSubscription represents a subscription to Ethereum blocks.
@@ -69,9 +69,8 @@ type (
 func NewClient(
 	cb peruneth.ContractBackend,
 	a accounts.Account,
-	networkID *big.Int,
 ) *Client {
-	return &Client{ContractBackend: cb, account: a, NetworkID: networkID}
+	return &Client{ContractBackend: cb, account: a}
 }
 
 // NewClientForWalletAndAccount creates a new Erdstall Ethereum client for the
@@ -80,11 +79,10 @@ func NewClientForWalletAndAccount(
 	ci peruneth.ContractInterface,
 	w accounts.Wallet,
 	a accounts.Account,
-	networkID *big.Int,
 ) *Client {
 	tr := NewDefaultTransactor(w)
 	cb := peruneth.NewContractBackend(ci, tr)
-	return &Client{ContractBackend: cb, account: a, NetworkID: networkID}
+	return &Client{ContractBackend: cb, account: a}
 }
 
 // NewClientForWallet returns a new Client using the given wallet as transactor.
@@ -93,7 +91,6 @@ func NewClientForWalletAndAccount(
 func NewClientForWallet(
 	ci peruneth.ContractInterface,
 	w accounts.Wallet,
-	networkID *big.Int,
 ) (*Client, error) {
 	hdw, err := perunhd.NewWallet(w, perunhd.DefaultRootDerivationPath.String(), 0)
 	if err != nil {
@@ -106,7 +103,7 @@ func NewClientForWallet(
 	tr := perunhd.NewTransactor(hdw.Wallet())
 	cb := peruneth.NewContractBackend(ci, tr)
 
-	return NewClient(cb, acc.Account, networkID), nil
+	return NewClient(cb, acc.Account), nil
 }
 
 // OnlyErdstallReceipts can be called during client setup to skip requesting
@@ -142,14 +139,26 @@ func CreateEthereumClient(ctx context.Context, url string, wallet accounts.Walle
 			}
 		}
 
-		networkID, err := ethClient.NetworkID(ctx)
-		return NewClientForWalletAndAccount(ethClient, wallet, a, networkID), err
+		return NewClientForWalletAndAccount(ethClient, wallet, a), nil
 	}
 }
 
 // Account returns the account of the client.
 func (cl *Client) Account() accounts.Account {
 	return cl.account
+}
+
+// NetworkID returns the ethereum client's network ID.
+func (cl *Client) NetworkID() (*big.Int, error) {
+	if v, ok := cl.ContractBackend.ContractInterface.(interface {
+		NetworkID(context.Context) (*big.Int, error)
+	}); ok {
+		ctx, cancel := ContextNodeReq()
+		defer cancel()
+		return v.NetworkID(ctx)
+	}
+
+	return nil, errors.New("client's ContractInterface has no method NetworkID")
 }
 
 func (cl *Client) WaitForBlock(ctx context.Context, target uint64) error {
