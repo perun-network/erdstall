@@ -4,6 +4,7 @@
 package client_test
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"testing"
@@ -118,13 +119,16 @@ func testPhase(t *testing.T, phase string, fn func(client *client.Client, status
 func setup(t *testing.T, honesty *op.Config, numClients int) (operator *op.Operator, clients []*client.Client) {
 	// Start Operator.
 	operator = startOp(honesty)
+	time.Sleep(5 * time.Second) // Wait for deployment.
 	// Start clients.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	for i := 0; i < numClients; i++ {
-		client, err := startClient(i, operator.EnclaveParams().Contract)
-		time.Sleep(3 * time.Second) // wait for chain connection
+		client, err := startClient(ctx, i, operator.EnclaveParams().Contract)
 		require.NoError(t, err)
 		clients = append(clients, client)
 	}
+	time.Sleep(5 * time.Second) // Wait for deployment.
 	return
 }
 
@@ -148,7 +152,7 @@ func filterStatus(t pkgtest.ConcT) chan *client.CmdStatus {
 	return status
 }
 
-func startClient(index int, contract common.Address) (*client.Client, error) {
+func startClient(ctx context.Context, index int, contract common.Address) (*client.Client, error) {
 	cfg := config.ClientConfig{
 		ChainURL:     ethUrl,
 		OpHost:       "127.0.0.1",
@@ -174,7 +178,7 @@ func startClient(index int, contract common.Address) (*client.Client, error) {
 	}()
 
 	cb := perunchannel.NewContractBackend(eb, perunhd.NewTransactor(wallet.Wallet.Wallet()))
-	rpc, err := client.NewRPC(cfg.OpHost, uint16(cfg.OpPort))
+	rpc, err := client.NewRPC(ctx, cfg.OpHost, uint16(cfg.OpPort))
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,9 @@
 package main
 
 import (
+	"context"
+	"time"
+
 	log "github.com/sirupsen/logrus"
 	perunchannel "perun.network/go-perun/backend/ethereum/channel"
 	perunhd "perun.network/go-perun/backend/ethereum/wallet/hd"
@@ -25,8 +28,10 @@ func main() {
 	}
 	events := make(chan *client.Event, 10) // GUI event pipe
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	cb := perunchannel.NewContractBackend(eb, perunhd.NewTransactor(wallet.Wallet.Wallet()))
-	rpc, err := client.NewRPC(cfg.OpHost, uint16(cfg.OpPort))
+	rpc, err := client.NewRPC(ctx, cfg.OpHost, uint16(cfg.OpPort))
 	if err != nil {
 		log.WithError(err).Panicf("Connecting to the operator failed.")
 	}

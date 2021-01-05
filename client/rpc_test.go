@@ -48,12 +48,11 @@ func TestRPC_ClientOp(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(shortWait)
-	rpcClient, err := client.NewRPC("0.0.0.0", opRPCPort)
-	myErr := errors.New("Should fail")
-	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), longWait)
 	defer cancel()
+	rpcClient, err := client.NewRPC(ctx, "0.0.0.0", opRPCPort)
+	myErr := errors.New("Should fail")
+	require.NoError(t, err)
 
 	t.Run("SendTx-error", func(t *testing.T) {
 		tx := ttest.RandomTx(t, rng)

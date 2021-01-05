@@ -70,7 +70,7 @@ func CreateUser(
 		t.Fatal("creating ethereum wallet and client:", err)
 	}
 
-	rpcClient, err := client.NewRPC(rpcHost, rpcPort)
+	rpcClient, err := client.NewRPC(ctx, rpcHost, rpcPort)
 	if err != nil {
 		t.Fatal("dialing rpc:", err)
 	}

@@ -49,14 +49,15 @@ type (
 	callback func(wire.Result, []byte)
 )
 
-// NewRPC returns a new RPC object.
-// RPC immediately tries to connect to the operator and starts to handle
-// incomming data.
+// NewRPC tries to dial the operator as long as the context is not cancelled
+// and returns a new RPC object when it was successful.
+// The RPC object starts to handle incomming data.
 // You may want to call Subscribe afterwards if you need balance and/or
 // deposit proofs.
-func NewRPC(host string, port uint16) (*RPC, error) {
+func NewRPC(ctx context.Context, host string, port uint16) (*RPC, error) {
 	u := url.URL{Scheme: "ws", Host: fmt.Sprintf("%s:%d", host, port), Path: "/ws"}
-	conn, _, err := gorilla.DefaultDialer.Dial(u.String(), nil)
+
+	conn, err := dialRPC(ctx, u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +75,22 @@ func NewRPC(host string, port uint16) (*RPC, error) {
 	go rpc.handleConnections()
 
 	return rpc, nil
+}
+
+func dialRPC(ctx context.Context, url string) (conn *gorilla.Conn, err error) {
+	for {
+		conn, _, err = gorilla.DefaultDialer.Dial(url, nil)
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("dialing rpc: %w", err)
+			default:
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+		}
+		return
+	}
 }
 
 func (r *RPC) Log() *log.Entry {
