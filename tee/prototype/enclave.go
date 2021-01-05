@@ -35,8 +35,9 @@ type (
 		// cache
 		depositProofCache map[common.Address]*tee.DepositProof
 
-		running atomic.Bool   // if false, signals processors to return after sealing epoch
-		done    chan struct{} // signal by processors that they're done
+		running   atomic.Bool   // if false, signals processors to return after sealing epoch
+		done      chan struct{} // signal by epoch processor that it is done
+		blockFail chan struct{} // signal by block processor that it failed
 	}
 
 	blockReq struct {
@@ -68,6 +69,7 @@ func NewEnclave(wallet accounts.Wallet) *Enclave {
 		balanceProofs:     make(chan []*tee.BalanceProof, bufSizeProofs),
 		depositProofCache: make(map[common.Address]*tee.DepositProof),
 		done:              make(chan struct{}),
+		blockFail:         make(chan struct{}),
 	}
 }
 

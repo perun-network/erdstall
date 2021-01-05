@@ -161,13 +161,18 @@ func (operator *Operator) Serve(port uint16) error {
 			err := fn()
 			if err != nil {
 				log.Errorf("Error in %s: %v", name, err)
+			} else {
+				log.Debugf("%s returned.", name)
 			}
 			return err
 		})
 	}
 
 	// Start enclave
-	errGo("Enclave.Run", func() error { return operator.enclave.Run(operator.params) })
+	errGo("Enclave.Run", func() error {
+		defer operator.Close() // Make sure that operator closes on a failing enclave.
+		return operator.enclave.Run(operator.params)
+	})
 	log.Info("Operator.Serve: Enclave running")
 
 	operator.rpcOperator = NewRPCOperator(operator.enclave)
