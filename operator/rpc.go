@@ -69,15 +69,15 @@ type (
 	}
 )
 
-// NewOpServer returns an `opServer` instance.
-func NewOpServer(osc OpServerConfig, m *http.ServeMux) *opServer {
+// newOpServer returns an `opServer` instance.
+func newOpServer(osc OpServerConfig) *opServer {
+	serveMux := http.NewServeMux()
 	return &opServer{
 		server: &http.Server{
-			Addr:      fmt.Sprintf("%s:%d", osc.Host, osc.Port),
-			Handler:   m,
-			TLSConfig: nil,
+			Addr:    fmt.Sprintf("%s:%d", osc.Host, osc.Port),
+			Handler: serveMux,
 		},
-		serveMux:     m,
+		serveMux:     serveMux,
 		key:          osc.KeyFilePath,
 		cert:         osc.CertFilePath,
 		clientConfig: osc.ClientConfig,
@@ -97,7 +97,8 @@ func (s *opServer) Shutdown(ctx context.Context) error {
 }
 
 // NewRPC returns a new RPC object with the given `opServer`. Call Serve to start it.
-func NewRPC(op WireAPI, server *opServer) *RPCServer {
+func NewRPC(op WireAPI, osc OpServerConfig) *RPCServer {
+	server := newOpServer(osc)
 	rpc := &RPCServer{
 		op:     op,
 		server: server,

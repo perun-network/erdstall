@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 
 	"github.com/ethereum/go-ethereum/common"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
@@ -191,12 +190,9 @@ func (operator *Operator) Serve(port uint16) error {
 		ClientConfig: clientConfig,
 	}
 
-	m := http.NewServeMux()
-	opserver := NewOpServer(osc, m)
-
 	// Handle RPC
 	errGo("Op.RPCServe", func() error {
-		rpc := NewRPC(operator.rpcOperator, opserver)
+		rpc := NewRPC(operator.rpcOperator, osc)
 		operator.OnClose(func() {
 			rpc.Close()
 		})

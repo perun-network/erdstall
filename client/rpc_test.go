@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"math/big"
-	"net/http"
 	"testing"
 	"time"
 
@@ -42,8 +41,7 @@ func TestRPC_ClientOp(t *testing.T) {
 		Port:         opRPCPort,
 		ClientConfig: operator.ClientConfig{},
 	}
-	opServer := operator.NewOpServer(osc, http.NewServeMux())
-	rpcServer := operator.NewRPC(op, opServer)
+	rpcServer := operator.NewRPC(op, osc)
 	go func() {
 		if err := rpcServer.Serve(); err != nil {
 			panic(err)
