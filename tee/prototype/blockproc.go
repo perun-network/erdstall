@@ -20,8 +20,13 @@ func (e *Enclave) blockProcessor(
 	process := func(b blockReq) (error, bool) {
 		k := uint64(0) //e.params.PowDepth
 
-		if n := b.block.NumberU64(); e.bc.Len() == 0 && e.params.InitBlock != n {
-			return fmt.Errorf("first block (%d) not initial Erdstall block (%d)", n, e.params.InitBlock), true
+		if n := b.block.NumberU64(); e.bc.Len() == 0 {
+			if n > e.params.InitBlock {
+				return fmt.Errorf("first block (%d) not initial Erdstall block (%d)", n, e.params.InitBlock), true
+			} else if n < e.params.InitBlock {
+				log.Warnf("Received block (%d) < first Erdstall block (%d), ignoring.", n, e.params.InitBlock)
+				return nil, false
+			}
 		}
 
 		// verify blockchain
