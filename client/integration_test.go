@@ -228,6 +228,8 @@ func startOp(honesty *op.Config) *op.Operator {
 			panic(fmt.Sprintf("Operator.Serve: %v", err))
 		}
 	}()
+	// Wait until we can be sure that the server is up and running.
+	time.Sleep(5 * time.Second)
 	return operator
 }
 
