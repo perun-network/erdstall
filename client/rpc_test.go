@@ -134,4 +134,7 @@ func TestRPC_ClientOp(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, *dp, proof)
 	})
+
+	assert.NoError(t, rpcClient.Close())
+	assert.NoError(t, rpcServer.Close())
 }

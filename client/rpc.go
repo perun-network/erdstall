@@ -67,11 +67,12 @@ func NewRPC(host string, port uint16) (*RPC, error) {
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return nil, err
 	}
-	conn.SetCloseHandler(func(code int, err string) error {
-		rpc.Log().WithField("code", code).Errorf("WS connection was closed: %s", err)
-		return rpc.Close()
-	})
-	go rpc.handleConnections()
+	go func() {
+		err := rpc.handleConnections()
+		rpc.Log().WithError(err).Debug("RPC connection handler returned.")
+		err = rpc.Close()
+		rpc.Log().WithError(err).Debug("Stopped RPC client.")
+	}()
 
 	return rpc, nil
 }
@@ -142,14 +143,12 @@ func (r *RPC) Subscribe(ctx context.Context, user common.Address) (*Subscription
 	}
 }
 
-func (r *RPC) handleConnections() {
+func (r *RPC) handleConnections() error {
 	for !r.IsClosed() {
 		// gorilla has no async read method?!
 		_, data, err := r.conn.ReadMessage()
 		if err != nil {
-			r.Log().Error("reading ws message: ", err)
-			time.Sleep(1 * time.Second)
-			continue
+			return fmt.Errorf("reading ws message: %w", err)
 		}
 		r.Log().Trace("client received: ", string(data))
 		var msg wire.Result
@@ -164,13 +163,13 @@ func (r *RPC) handleConnections() {
 		case msg.Topic != "":
 			if r.subscription == nil {
 				r.Log().Error("Received proof without subscription")
-				return
 			}
 			r.subscription.handleTopic(msg.Topic, data)
 		default:
 			r.Log().Error("Received result without ID or Topic")
 		}
 	}
+	return nil
 }
 
 func (r *RPC) registerCallback(id wire.ID, cb callback) {
