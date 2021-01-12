@@ -132,13 +132,13 @@ func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request)
 	upgrader := gorilla.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(out, in, nil)
 	if err != nil {
-		r.Log().WithError(err).Error("WS upgrade:", err)
+		r.Log().WithError(err).Error("WS upgrade")
 		return
 	}
 
 	peer := &Peer{conn: conn, op: r.op}
 	if err := peer.sendJSON(r.server.clientConfig); err != nil {
-		r.Log().WithError(err).Error("Pushing ClientConfig:", err)
+		r.Log().WithError(err).Error("Pushing ClientConfig")
 	}
 
 	conn.SetCloseHandler(func(int, string) error {
