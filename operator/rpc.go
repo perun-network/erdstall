@@ -24,7 +24,37 @@ type (
 	RPCServer struct {
 		pkgsync.Closer
 		op     WireAPI
-		server *http.Server
+		server *opServer
+	}
+
+	// opServer is an implementation detail and wraps a `http.Server` and holds
+	// necessary configuration values which hide the explicit instantiation of
+	// an encrypted or unencrypted connection. Also holds client configuration
+	// which is transmitted over the wire.
+	opServer struct {
+		server       *http.Server
+		serveMux     *http.ServeMux
+		cert         string // Maybe value for ssl certificate path.
+		key          string // Maybe value for ssl key path.
+		clientConfig ClientConfig
+	}
+
+	// OpServerConfig holds all necessary configuration values for the
+	// `OpServer` which the RPCServer uses to communicate over the wire.
+	OpServerConfig struct {
+		Host         string
+		Port         uint16
+		CertFilePath string
+		KeyFilePath  string
+		ClientConfig ClientConfig
+	}
+
+	// ClientConfig describes the configuration, which is send to connecting
+	// Clients.
+	ClientConfig struct {
+		NetworkID string // Network-ID
+		Contract  common.Address
+		POWDepth  uint64
 	}
 
 	// Peer is a connected client.
@@ -39,12 +69,41 @@ type (
 	}
 )
 
-// NewRPC returns a new RPC object. Call Serve to start it.
-func NewRPC(op WireAPI, host string, port uint16) *RPCServer {
-	m := http.NewServeMux()
-	server := &http.Server{Addr: fmt.Sprintf("%s:%d", host, port), Handler: m}
-	rpc := &RPCServer{op: op, server: server}
-	m.HandleFunc("/ws", rpc.connectionHandler)
+// newOpServer returns an `opServer` instance.
+func newOpServer(osc OpServerConfig) *opServer {
+	serveMux := http.NewServeMux()
+	return &opServer{
+		server: &http.Server{
+			Addr:    fmt.Sprintf("%s:%d", osc.Host, osc.Port),
+			Handler: serveMux,
+		},
+		serveMux:     serveMux,
+		key:          osc.KeyFilePath,
+		cert:         osc.CertFilePath,
+		clientConfig: osc.ClientConfig,
+	}
+}
+
+func (s *opServer) ListenAndServe() error {
+	if s.cert != "" && s.key != "" {
+		return s.server.ListenAndServeTLS(s.cert, s.key)
+	} else {
+		return s.server.ListenAndServe()
+	}
+}
+
+func (s *opServer) Shutdown(ctx context.Context) error {
+	return s.server.Shutdown(ctx)
+}
+
+// NewRPC returns a new RPC object with the given `opServer`. Call Serve to start it.
+func NewRPC(op WireAPI, osc OpServerConfig) *RPCServer {
+	server := newOpServer(osc)
+	rpc := &RPCServer{
+		op:     op,
+		server: server,
+	}
+	server.serveMux.HandleFunc("/ws", rpc.connectionHandler)
 	return rpc
 }
 
@@ -62,6 +121,7 @@ func (r *RPCServer) Serve() error {
 	}) {
 		panic("Could not add OnClose function")
 	}
+
 	if err := r.server.ListenAndServe(); err != http.ErrServerClosed {
 		return err
 	}
@@ -72,11 +132,15 @@ func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request)
 	upgrader := gorilla.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(out, in, nil)
 	if err != nil {
-		r.Log().WithError(err).Error("WS upgrade:", err)
+		r.Log().WithError(err).Error("WS upgrade")
 		return
 	}
 
 	peer := &Peer{conn: conn, op: r.op}
+	if err := peer.sendJSON(r.server.clientConfig); err != nil {
+		r.Log().WithError(err).Error("Pushing ClientConfig")
+	}
+
 	conn.SetCloseHandler(func(int, string) error {
 		return peer.Close()
 	})
@@ -114,7 +178,9 @@ func (p *Peer) Close() error {
 		return err
 	}
 	p.conn.Close()
-	p.sub.Unsubscribe()
+	if p.sub != nil {
+		p.sub.Unsubscribe()
+	}
 	return nil
 }
 

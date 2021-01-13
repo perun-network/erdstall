@@ -4,6 +4,7 @@ package eth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -137,6 +138,7 @@ func CreateEthereumClient(ctx context.Context, url string, wallet accounts.Walle
 				continue
 			}
 		}
+
 		return NewClientForWalletAndAccount(ethClient, wallet, a), nil
 	}
 }
@@ -144,6 +146,19 @@ func CreateEthereumClient(ctx context.Context, url string, wallet accounts.Walle
 // Account returns the account of the client.
 func (cl *Client) Account() accounts.Account {
 	return cl.account
+}
+
+// NetworkID returns the ethereum client's network ID.
+func (cl *Client) NetworkID() (*big.Int, error) {
+	if v, ok := cl.ContractBackend.ContractInterface.(interface {
+		NetworkID(context.Context) (*big.Int, error)
+	}); ok {
+		ctx, cancel := ContextNodeReq()
+		defer cancel()
+		return v.NetworkID(ctx)
+	}
+
+	return nil, errors.New("client's ContractInterface has no method NetworkID")
 }
 
 func (cl *Client) WaitForBlock(ctx context.Context, target uint64) error {

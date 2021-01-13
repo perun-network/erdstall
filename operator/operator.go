@@ -176,9 +176,30 @@ func (operator *Operator) Serve(port uint16) error {
 	log.Info("Operator.Serve: Enclave running")
 
 	operator.rpcOperator = NewRPCOperator(operator.enclave)
+
+	var netIDStr string
+	if netID, err := operator.EthClient.NetworkID(); err != nil {
+		log.Errorf("Retrieving network ID: %v", err)
+	} else {
+		netIDStr = netID.String()
+	}
+
+	clientConfig := ClientConfig{
+		Contract:  operator.params.Contract,
+		NetworkID: netIDStr,
+		POWDepth:  operator.params.PowDepth,
+	}
+	osc := OpServerConfig{
+		Host:         "0.0.0.0",
+		Port:         port,
+		CertFilePath: operator.cfg.CertFile,
+		KeyFilePath:  operator.cfg.KeyFile,
+		ClientConfig: clientConfig,
+	}
+
 	// Handle RPC
 	errGo("Op.RPCServe", func() error {
-		rpc := NewRPC(operator.rpcOperator, "0.0.0.0", port)
+		rpc := NewRPC(operator.rpcOperator, osc)
 		operator.OnClose(func() {
 			rpc.Close()
 		})
