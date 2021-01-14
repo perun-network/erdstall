@@ -5,6 +5,7 @@ package operator_test
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"os/exec"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/core/types"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	"github.com/stretchr/testify/assert"
 
 	op "github.com/perun-network/erdstall/operator"
 	"github.com/perun-network/erdstall/operator/test"
@@ -53,7 +55,7 @@ func TestOperator(t *testing.T) {
 	// transfer from user1 to user2
 	user1.Transfer(ctx, user2, 3)
 	log.Info("operator_test.TestOperator: Transfer from user1 to user2")
-
+	assert.Equal(t, (*big.Int)(user2.TxReceipt(ctx).Amount).Int64(), int64(3))
 	environment.WaitPhase()
 
 	// get balance proof
@@ -64,6 +66,7 @@ func TestOperator(t *testing.T) {
 	// transfer from user2 to user1
 	user2.Transfer(ctx, user1, 2)
 	log.Info("operator_test.TestOperator: Transfer from user2 to user1")
+	assert.Equal(t, (*big.Int)(user1.TxReceipt(ctx).Amount).Int64(), int64(2))
 
 	environment.WaitPhase()
 
@@ -75,6 +78,8 @@ func TestOperator(t *testing.T) {
 	// transfer from user1 to user2 and transfer from user2 to user1
 	user1.Transfer(ctx, user2, 1)
 	user2.Transfer(ctx, user1, 1)
+	assert.Equal(t, (*big.Int)(user1.TxReceipt(ctx).Amount).Int64(), int64(1))
+	assert.Equal(t, (*big.Int)(user2.TxReceipt(ctx).Amount).Int64(), int64(1))
 	log.Info("operator_test.TestOperator: Transfer from user1 to user2 and transfer from user2 to user1")
 
 	environment.WaitPhase()

@@ -127,6 +127,16 @@ func (u *User) DepositProof(ctx context.Context) {
 	u.epoch = proof.Balance.Epoch
 }
 
+// TxReceipt returns the next transaction receipt.
+func (u *User) TxReceipt(ctx context.Context) tee.Transaction {
+	tx, err := u.proofSub.TxReceipt(ctx)
+	if err != nil {
+		u.Fatal("calling Subscription.TxReceipt:", err)
+	}
+
+	return tx
+}
+
 // Transfer transfers the specified amount to the specified receiver.
 func (u *User) Transfer(ctx context.Context, receiver *User, amount int64) {
 	log.Debug("Sending transfer in epoch #", u.dps[u.epoch].Balance.Epoch)
