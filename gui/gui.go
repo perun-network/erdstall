@@ -187,7 +187,7 @@ func layout(g *gocui.Gui, client *client.Client) error {
 			return err
 		}
 		addr := client.Address().Hex()[:10]
-		v.Title = client.Config.UserName + fmt.Sprintf(" %s on %s", addr, client.Config.ChainURL)
+		v.Title = client.Config.UserName + fmt.Sprintf(" %s on %s", addr, client.ChainURL())
 		v.Autoscroll = true
 	}
 	chainH := (maxH / 3) * 2
