@@ -139,25 +139,26 @@ func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request)
 	peer := &Peer{conn: conn, op: r.op}
 	if err := peer.sendJSON(r.server.clientConfig); err != nil {
 		r.Log().WithError(err).Error("Pushing ClientConfig")
+		return
 	}
-
-	conn.SetCloseHandler(func(int, string) error {
-		return peer.Close()
-	})
-	go peer.readMessages()
+	// Start client handler routine.
+	go func() {
+		err := peer.readMessages()
+		r.Log().WithError(err).Debug("Peer connection handler returned.")
+		err = peer.Close()
+		r.Log().WithError(err).Debug("Stopped Peer.")
+	}()
 }
 
 func (p *Peer) Log() *log.Entry {
 	return log.WithField("role", "peer")
 }
 
-func (p *Peer) readMessages() {
+func (p *Peer) readMessages() error {
 	for !p.IsClosed() {
 		_, msg, err := p.conn.ReadMessage()
 		if err != nil {
-			p.Log().WithError(err).Error("Could not read msg")
-			time.Sleep(1 * time.Second)
-			continue
+			return fmt.Errorf("reading ws message: %w", err)
 		}
 
 		var call wire.Call
@@ -171,6 +172,7 @@ func (p *Peer) readMessages() {
 			p.Log().WithField("id", call.ID).WithError(sendErr).Error("Could not send result")
 		}
 	}
+	return nil
 }
 
 func (p *Peer) Close() error {
