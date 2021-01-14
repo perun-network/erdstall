@@ -32,7 +32,7 @@ var _ op.WireAPI = (*RPCOperator)(nil)
 func NewRPROperator(enclave *Enclave) *RPCOperator {
 	return &RPCOperator{
 		enclave: enclave,
-		op:      op.NewRPCOperator(enclave),
+		op:      op.NewRPCOperator(enclave, nil),
 	}
 }
 

@@ -27,7 +27,8 @@ type (
 		mtx     sync.Mutex // protects all
 		enclave tee.Enclave
 
-		subs map[common.Address]*BufferedProofSubs
+		txReceipts *txReceipts
+		subs       map[common.Address]*BufferedProofSubs
 	}
 
 	// BufferedProofSub describes a slice of subs, which also holds the latest
@@ -42,16 +43,21 @@ type (
 	ProofSub struct {
 		deposits chan tee.DepositProof
 		balances chan tee.BalanceProof
+		receipts chan tee.Transaction
 		quit     chan struct{}
 	}
 )
 
 var _ WireAPI = (*RPCOperator)(nil)
 
-func NewRPCOperator(enclave tee.Enclave) *RPCOperator {
+func NewRPCOperator(enclave tee.Enclave, txReceipts *txReceipts) *RPCOperator {
+	if txReceipts == nil {
+		txReceipts = newTXReceipts()
+	}
 	return &RPCOperator{
-		enclave: enclave,
-		subs:    make(map[common.Address]*BufferedProofSubs),
+		enclave:    enclave,
+		subs:       make(map[common.Address]*BufferedProofSubs),
+		txReceipts: txReceipts,
 	}
 }
 
@@ -158,6 +164,7 @@ func newProofSub() *ProofSub {
 	return &ProofSub{
 		deposits: make(chan tee.DepositProof, 1),
 		balances: make(chan tee.BalanceProof, 1),
+		receipts: make(chan tee.Transaction, 1),
 		quit:     make(chan struct{}),
 	}
 }
@@ -168,6 +175,10 @@ func (sub ProofSub) Deposits() <-chan tee.DepositProof {
 
 func (sub ProofSub) Balances() <-chan tee.BalanceProof {
 	return sub.balances
+}
+
+func (sub ProofSub) Receipts() <-chan tee.Transaction {
+	return sub.receipts
 }
 
 func (sub ProofSub) Closed() <-chan struct{} {
