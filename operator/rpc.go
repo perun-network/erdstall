@@ -65,7 +65,7 @@ type (
 		connMtx sync.Mutex // protects conn.
 		conn    *gorilla.Conn
 
-		sub *ProofSub
+		sub *ClientSub
 	}
 )
 

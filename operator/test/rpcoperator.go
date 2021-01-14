@@ -72,9 +72,9 @@ func (r *RPCOperator) Send(tx tee.Transaction) error {
 // SubscribeProofs subscribed to the proofs that can be added via
 // PushDepositProof and PushBalanceProof which buffers one proof.
 // Returns the error that was set by SetSubscribeProofsError.
-func (r *RPCOperator) SubscribeProofs(addr common.Address) (op.ProofSub, error) {
+func (r *RPCOperator) SubscribeProofs(addr common.Address) (op.ClientSub, error) {
 	if r.subscribeError != nil {
-		return op.ProofSub{}, r.subscribeError
+		return op.ClientSub{}, r.subscribeError
 	}
 	return r.op.SubscribeProofs(addr)
 }

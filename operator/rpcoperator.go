@@ -19,7 +19,7 @@ type (
 	// implementation of it over the wire.
 	WireAPI interface {
 		Send(tee.Transaction) error
-		SubscribeProofs(common.Address) (ProofSub, error)
+		SubscribeProofs(common.Address) (ClientSub, error)
 	}
 
 	// RPCOperator will be exposed to the client as a websocket RPC Server.
@@ -29,19 +29,19 @@ type (
 		enclave tee.Enclave
 
 		txReceipts *txReceipts
-		subs       map[common.Address]*BufferedProofSubs
+		subs       map[common.Address]*BufferedClientSubs
 	}
 
-	// BufferedProofSub describes a slice of subs, which also holds the latest
+	// BufferedClientSub describes a slice of subs, which also holds the latest
 	// available deposit- and/or balance-proof.
-	BufferedProofSubs struct {
-		subs     []ProofSub
+	BufferedClientSubs struct {
+		subs     []ClientSub
 		latestDP *tee.DepositProof
 		latestBP *tee.BalanceProof
 	}
 
-	// ProofSub is a subscription on TEE proofs.
-	ProofSub struct {
+	// ClientSub is a subscription on TEE proofs.
+	ClientSub struct {
 		deposits chan tee.DepositProof
 		balances chan tee.BalanceProof
 		receipts chan tee.Transaction
@@ -59,7 +59,7 @@ func NewRPCOperator(enclave tee.Enclave, txReceipts *txReceipts) *RPCOperator {
 	}
 	return &RPCOperator{
 		enclave:    enclave,
-		subs:       make(map[common.Address]*BufferedProofSubs),
+		subs:       make(map[common.Address]*BufferedClientSubs),
 		txReceipts: txReceipts,
 	}
 }
@@ -88,7 +88,7 @@ func (o *RPCOperator) Send(tx tee.Transaction) error {
 
 // SubscribeProofs returns a subscription on TEE proofs for the given address.
 // The subscription buffers the most recent proof until the client retrieves it.
-func (o *RPCOperator) SubscribeProofs(addr common.Address) (ProofSub, error) {
+func (o *RPCOperator) SubscribeProofs(addr common.Address) (ClientSub, error) {
 	o.mtx.Lock()
 	defer o.mtx.Unlock()
 	log.WithField("who", addr.Hex()).Debug("Subscribed to proofs")
@@ -97,10 +97,10 @@ func (o *RPCOperator) SubscribeProofs(addr common.Address) (ProofSub, error) {
 }
 
 // subscribe is an internal implementation detail and should not be called.
-func (o *RPCOperator) subscribe(addr common.Address) ProofSub {
+func (o *RPCOperator) subscribe(addr common.Address) ClientSub {
 	sub := *newProofSub(o.txReceipts.AddPeer(addr))
 	if _, ok := o.subs[addr]; !ok {
-		o.subs[addr] = new(BufferedProofSubs)
+		o.subs[addr] = new(BufferedClientSubs)
 	} else {
 		if dp := o.subs[addr].latestDP; dp != nil {
 			sub.deposits <- *dp
@@ -120,7 +120,7 @@ func (o *RPCOperator) PushDepositProof(proof tee.DepositProof) {
 	bufsub, ok := o.subs[who]
 	if !ok {
 		log.WithField("who", who.Hex()).Debug("Received DP without subscription - buffering")
-		bufsub = new(BufferedProofSubs)
+		bufsub = new(BufferedClientSubs)
 		o.subs[who] = bufsub
 	}
 	bufsub.latestDP = &proof
@@ -152,7 +152,7 @@ func (o *RPCOperator) PushBalanceProof(proof tee.BalanceProof) {
 	bufsub, ok := o.subs[who]
 	if !ok {
 		log.WithField("who", who.Hex()).Debug("Received BP without subscription - buffering")
-		bufsub = new(BufferedProofSubs)
+		bufsub = new(BufferedClientSubs)
 		o.subs[who] = bufsub
 	}
 	bufsub.latestBP = &proof
@@ -178,8 +178,8 @@ func (o *RPCOperator) PushBalanceProof(proof tee.BalanceProof) {
 }
 
 // newProofSub returns a new proofSub. The proof channels have buffer size 1.
-func newProofSub(receipts chan tee.Transaction) *ProofSub {
-	return &ProofSub{
+func newProofSub(receipts chan tee.Transaction) *ClientSub {
+	return &ClientSub{
 		deposits: make(chan tee.DepositProof, 1),
 		balances: make(chan tee.BalanceProof, 1),
 		receipts: receipts,
@@ -187,23 +187,23 @@ func newProofSub(receipts chan tee.Transaction) *ProofSub {
 	}
 }
 
-func (sub ProofSub) Deposits() <-chan tee.DepositProof {
+func (sub ClientSub) Deposits() <-chan tee.DepositProof {
 	return sub.deposits
 }
 
-func (sub ProofSub) Balances() <-chan tee.BalanceProof {
+func (sub ClientSub) Balances() <-chan tee.BalanceProof {
 	return sub.balances
 }
 
-func (sub ProofSub) Receipts() <-chan tee.Transaction {
+func (sub ClientSub) Receipts() <-chan tee.Transaction {
 	return sub.receipts
 }
 
-func (sub ProofSub) Closed() <-chan struct{} {
+func (sub ClientSub) Closed() <-chan struct{} {
 	return sub.quit
 }
 
-func (sub ProofSub) Unsubscribe() {
+func (sub ClientSub) Unsubscribe() {
 	select {
 	case <-sub.quit:
 	default:
