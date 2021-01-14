@@ -5,6 +5,7 @@ package operator
 import (
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	log "github.com/sirupsen/logrus"
@@ -50,6 +51,8 @@ type (
 
 var _ WireAPI = (*RPCOperator)(nil)
 
+var txReceiptDeliveryTimeout = 20 * time.Second
+
 func NewRPCOperator(enclave tee.Enclave, txReceipts *txReceipts) *RPCOperator {
 	if txReceipts == nil {
 		txReceipts = newTXReceipts()
@@ -65,7 +68,22 @@ func (o *RPCOperator) Send(tx tee.Transaction) error {
 	o.mtx.Lock()
 	defer o.mtx.Unlock()
 	log.Infof("Sending %d WEI 0x%s…->0x%s…", (*big.Int)(tx.Amount).Uint64(), tx.Sender.Hex()[:5], tx.Recipient.Hex()[:5])
-	return o.enclave.ProcessTXs(&tx)
+	if err := o.enclave.ProcessTXs(&tx); err != nil {
+		return err
+	}
+	if bsub, ok := o.subs[tx.Recipient]; ok {
+		timeout := time.After(txReceiptDeliveryTimeout)
+		for _, sub := range bsub.subs {
+			sub := sub
+			go func() {
+				select {
+				case sub.receipts <- tx:
+				case <-timeout:
+				}
+			}()
+		}
+	}
+	return nil
 }
 
 // SubscribeProofs returns a subscription on TEE proofs for the given address.
@@ -80,7 +98,7 @@ func (o *RPCOperator) SubscribeProofs(addr common.Address) (ProofSub, error) {
 
 // subscribe is an internal implementation detail and should not be called.
 func (o *RPCOperator) subscribe(addr common.Address) ProofSub {
-	sub := *newProofSub()
+	sub := *newProofSub(o.txReceipts.AddPeer(addr))
 	if _, ok := o.subs[addr]; !ok {
 		o.subs[addr] = new(BufferedProofSubs)
 	} else {
@@ -160,11 +178,11 @@ func (o *RPCOperator) PushBalanceProof(proof tee.BalanceProof) {
 }
 
 // newProofSub returns a new proofSub. The proof channels have buffer size 1.
-func newProofSub() *ProofSub {
+func newProofSub(receipts chan tee.Transaction) *ProofSub {
 	return &ProofSub{
 		deposits: make(chan tee.DepositProof, 1),
 		balances: make(chan tee.BalanceProof, 1),
-		receipts: make(chan tee.Transaction, 1),
+		receipts: receipts,
 		quit:     make(chan struct{}),
 	}
 }

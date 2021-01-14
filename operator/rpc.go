@@ -236,6 +236,13 @@ func (p *Peer) subscribe(who common.Address) error {
 					},
 					Proof: proof,
 				}
+			case tx := <-p.sub.Receipts():
+				update = &wire.TXReceipt{
+					Result: wire.Result{
+						Topic: wire.TXReceipts,
+					},
+					TX: tx,
+				}
 			case <-p.sub.Closed():
 				p.Log().Debug("Subscription routine returns due to closed sub.")
 				return
