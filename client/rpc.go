@@ -42,7 +42,8 @@ type (
 		// deposit proofs from the OP will be written into this channel.
 		depProofs chan tee.DepositProof
 		// balance proofs from the OP will be written into this channel.
-		balProofs chan tee.BalanceProof
+		balProofs  chan tee.BalanceProof
+		txReceipts chan tee.Transaction
 	}
 
 	// callback is used for handling call results.
@@ -116,8 +117,9 @@ func (r *RPC) Subscribe(ctx context.Context, user common.Address) (*Subscription
 		// immediately to prevent that they get reordered by a race condition
 		// from the go-routines writing them to the channel since a mutex is
 		// not FIFO.
-		balProofs: make(chan tee.BalanceProof, 10),
-		depProofs: make(chan tee.DepositProof, 10),
+		balProofs:  make(chan tee.BalanceProof, 10),
+		depProofs:  make(chan tee.DepositProof, 10),
+		txReceipts: make(chan tee.Transaction, 10),
 	}
 
 	call := wire.NewSubscribe(r.nextID(), user)
@@ -233,13 +235,28 @@ func (s *Subscription) handleTopic(topic wire.Topic, data []byte) {
 		}
 		s.balProofs <- msg.Proof
 		s.Log().WithField("epoch", msg.Proof.Balance.Epoch).Trace("Received balance proof")
+	case wire.TXReceipts:
+		var msg wire.TXReceipt
+		if err := json.Unmarshal(data, &msg); err != nil {
+			s.Log().WithError(err).Error("decoding json")
+			return
+		}
+		txLog := s.Log().
+			WithField("epoch", msg.TX.Epoch).
+			WithField("amount", msg.TX.Amount)
+		select {
+		case s.txReceipts <- msg.TX:
+			txLog.Debug("Received TX receipt")
+		default:
+			txLog.Debug("Discarded TX receipt")
+		}
 	default:
 		s.Log().WithField("topic", topic).Error("unknown result topic")
 	}
 }
 
 // DepositProof blocks until it can return the next deposit proof from the
-// operator or an error if the context ran out.
+// operator.
 func (s *Subscription) DepositProof(ctx context.Context) (tee.DepositProof, error) {
 	select {
 	case <-ctx.Done():
@@ -250,12 +267,23 @@ func (s *Subscription) DepositProof(ctx context.Context) (tee.DepositProof, erro
 }
 
 // BalanceProof blocks until it can return the next balance proof from the
-// operator or an error if the context ran out.
+// operator.
 func (s *Subscription) BalanceProof(ctx context.Context) (tee.BalanceProof, error) {
 	select {
 	case <-ctx.Done():
 		return tee.BalanceProof{}, ctx.Err()
 	case proof := <-s.balProofs:
 		return proof, nil
+	}
+}
+
+// TxReceipt blocks until it can return the next pending incoming transaction
+// from the operator.
+func (s *Subscription) TxReceipt(ctx context.Context) (tee.Transaction, error) {
+	select {
+	case <-ctx.Done():
+		return tee.Transaction{}, ctx.Err()
+	case tx := <-s.txReceipts:
+		return tx, nil
 	}
 }
