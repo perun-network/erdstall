@@ -16,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	pkgsync "perun.network/go-perun/pkg/sync"
 
+	"github.com/perun-network/erdstall/config"
 	"github.com/perun-network/erdstall/wire"
 )
 
@@ -36,7 +37,7 @@ type (
 		serveMux     *http.ServeMux
 		cert         string // Maybe value for ssl certificate path.
 		key          string // Maybe value for ssl key path.
-		clientConfig ClientConfig
+		clientConfig config.OpClientConfig
 	}
 
 	// OpServerConfig holds all necessary configuration values for the
@@ -46,15 +47,7 @@ type (
 		Port         uint16
 		CertFilePath string
 		KeyFilePath  string
-		ClientConfig ClientConfig
-	}
-
-	// ClientConfig describes the configuration, which is send to connecting
-	// Clients.
-	ClientConfig struct {
-		NetworkID string // Network-ID
-		Contract  common.Address
-		POWDepth  uint64
+		ClientConfig config.OpClientConfig
 	}
 
 	// Peer is a connected client.
@@ -137,7 +130,10 @@ func (r *RPCServer) connectionHandler(out http.ResponseWriter, in *http.Request)
 	}
 
 	peer := &Peer{conn: conn, op: r.op}
-	if err := peer.sendJSON(r.server.clientConfig); err != nil {
+	if err := peer.sendJSON(wire.PushConfig{
+		Result: wire.Result{Topic: wire.Config},
+		Config: r.server.clientConfig,
+	}); err != nil {
 		r.Log().WithError(err).Error("Pushing ClientConfig")
 		return
 	}

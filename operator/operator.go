@@ -13,6 +13,7 @@ import (
 	perrors "perun.network/go-perun/pkg/errors"
 	pkgsync "perun.network/go-perun/pkg/sync"
 
+	"github.com/perun-network/erdstall/config"
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
 	"github.com/perun-network/erdstall/tee"
@@ -188,7 +189,7 @@ func (operator *Operator) Serve(port uint16) error {
 		netIDStr = netID.String()
 	}
 
-	clientConfig := ClientConfig{
+	clientConfig := config.OpClientConfig{
 		Contract:  operator.params.Contract,
 		NetworkID: netIDStr,
 		POWDepth:  operator.params.PowDepth,

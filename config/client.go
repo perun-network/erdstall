@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 
+	"github.com/ethereum/go-ethereum/common"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -16,6 +17,14 @@ type ClientConfig struct {
 	Mnemonic     string
 	AccountIndex int
 	UserName     string
+}
+
+// OpClientConfig describes the part of the client's configuration which is sent
+// to connecting clients by the operator.
+type OpClientConfig struct {
+	NetworkID string         `json:"networkID"` // Network-ID
+	Contract  common.Address `json:"contract"`
+	POWDepth  uint64         `json:"powDepth"`
 }
 
 func ParseClientConfig() (cfg ClientConfig) {
