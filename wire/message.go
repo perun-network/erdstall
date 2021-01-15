@@ -4,6 +4,7 @@ package wire
 
 import (
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/perun-network/erdstall/config"
 	"github.com/perun-network/erdstall/tee"
 )
 
@@ -59,6 +60,11 @@ type (
 		TX tee.Transaction `json:"tx"`
 	}
 
+	PushConfig struct {
+		Result
+		Config config.OpClientConfig `json:"config"`
+	}
+
 	// Method describes a method to RPC call.
 	Method string
 	// Topic describes a topic to RPC subscribe on.
@@ -74,6 +80,7 @@ const (
 	BalanceProofs Topic = "balanceProofs"
 	DepositProofs Topic = "depositProofs"
 	TXReceipts    Topic = "txReceipts"
+	Config        Topic = "config"
 )
 
 // NewSendTx returns a `SendTx` object.

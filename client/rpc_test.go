@@ -14,6 +14,7 @@ import (
 	pkgtest "perun.network/go-perun/pkg/test"
 
 	"github.com/perun-network/erdstall/client"
+	"github.com/perun-network/erdstall/config"
 	"github.com/perun-network/erdstall/operator"
 	optest "github.com/perun-network/erdstall/operator/test"
 	"github.com/perun-network/erdstall/tee"
@@ -39,7 +40,7 @@ func TestRPC_ClientOp(t *testing.T) {
 	osc := operator.OpServerConfig{
 		Host:         "",
 		Port:         opRPCPort,
-		ClientConfig: operator.ClientConfig{},
+		ClientConfig: config.OpClientConfig{},
 	}
 	rpcServer := operator.NewRPC(op, osc)
 	go func() {

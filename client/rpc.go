@@ -17,7 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	pkgsync "perun.network/go-perun/pkg/sync"
 
-	"github.com/perun-network/erdstall/operator"
+	"github.com/perun-network/erdstall/config"
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/wire"
 )
@@ -36,7 +36,7 @@ type (
 
 		subscription *Subscription
 
-		clientCfg operator.ClientConfig
+		clientCfg config.OpClientConfig
 		hasConfig chan struct{}
 	}
 
@@ -84,7 +84,7 @@ func NewRPC(host string, port uint16) (*RPC, error) {
 }
 
 // ClientCfg returns the operator's client config.
-func (r *RPC) ClientCfg() operator.ClientConfig {
+func (r *RPC) ClientCfg() config.OpClientConfig {
 	<-r.hasConfig
 	return r.clientCfg
 }
@@ -167,19 +167,25 @@ func (r *RPC) handleConnections() error {
 		}
 		r.Log().Trace("client received: ", string(data))
 
-		if !hasConfig {
-			if err := json.Unmarshal(data, &r.clientCfg); err != nil {
-				r.Log().Error("decoding client config: ", err)
-				continue
-			}
-			close(r.hasConfig)
-			hasConfig = true
-			continue
-		}
-
 		var msg wire.Result
 		if err := json.Unmarshal(data, &msg); err != nil {
 			r.Log().Error("decoding message: ", err)
+			continue
+		}
+
+		if !hasConfig {
+			if msg.Topic != wire.Config {
+				r.Log().WithField("topic", msg.Topic).Error("Expected config message")
+				continue
+			}
+			var msg wire.PushConfig
+			if err := json.Unmarshal(data, &msg); err != nil {
+				r.Log().WithError(err).Error("decoding config message")
+				continue
+			}
+			r.clientCfg = msg.Config
+			hasConfig = true
+			close(r.hasConfig)
 			continue
 		}
 

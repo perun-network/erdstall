@@ -25,7 +25,6 @@ import (
 	"github.com/perun-network/erdstall/config"
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
-	"github.com/perun-network/erdstall/operator"
 	"github.com/perun-network/erdstall/tee"
 )
 
@@ -33,7 +32,7 @@ type Client struct {
 	psync.Closer
 	// Initialized in NewClient
 	Config       config.ClientConfig
-	OpConfig     operator.ClientConfig
+	OpConfig     config.OpClientConfig
 	conn         *RPC
 	proofSub     *Subscription
 	ethClient    *eth.Client
@@ -135,7 +134,7 @@ type CmdStatus struct {
 	War string // Warning
 }
 
-func NewClient(cfg config.ClientConfig, ccfg operator.ClientConfig, conn *RPC, events chan *Event, ethClient *eth.Client, signer tee.TextSigner) *Client {
+func NewClient(cfg config.ClientConfig, ccfg config.OpClientConfig, conn *RPC, events chan *Event, ethClient *eth.Client, signer tee.TextSigner) *Client {
 	return &Client{
 		Config:       cfg,
 		OpConfig:     ccfg,
