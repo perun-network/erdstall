@@ -17,6 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	pkgsync "perun.network/go-perun/pkg/sync"
 
+	"github.com/perun-network/erdstall/operator"
 	"github.com/perun-network/erdstall/tee"
 	"github.com/perun-network/erdstall/wire"
 )
@@ -34,6 +35,9 @@ type (
 		callbacks map[wire.ID]callback
 
 		subscription *Subscription
+
+		clientCfg operator.ClientConfig
+		hasConfig chan struct{}
 	}
 
 	// Subscription is returned by Subscribe() and can be used to iterate
@@ -64,6 +68,7 @@ func NewRPC(host string, port uint16) (*RPC, error) {
 	rpc := &RPC{
 		conn:      conn,
 		callbacks: make(map[wire.ID]callback),
+		hasConfig: make(chan struct{}),
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return nil, err
@@ -76,6 +81,12 @@ func NewRPC(host string, port uint16) (*RPC, error) {
 	}()
 
 	return rpc, nil
+}
+
+// ClientCfg returns the operator's client config.
+func (r *RPC) ClientCfg() operator.ClientConfig {
+	<-r.hasConfig
+	return r.clientCfg
 }
 
 func (r *RPC) Log() *log.Entry {
@@ -146,6 +157,8 @@ func (r *RPC) Subscribe(ctx context.Context, user common.Address) (*Subscription
 }
 
 func (r *RPC) handleConnections() error {
+	hasConfig := false
+
 	for !r.IsClosed() {
 		// gorilla has no async read method?!
 		_, data, err := r.conn.ReadMessage()
@@ -153,6 +166,17 @@ func (r *RPC) handleConnections() error {
 			return fmt.Errorf("reading ws message: %w", err)
 		}
 		r.Log().Trace("client received: ", string(data))
+
+		if !hasConfig {
+			if err := json.Unmarshal(data, &r.clientCfg); err != nil {
+				r.Log().Error("decoding client config: ", err)
+				continue
+			}
+			close(r.hasConfig)
+			hasConfig = true
+			continue
+		}
+
 		var msg wire.Result
 		if err := json.Unmarshal(data, &msg); err != nil {
 			r.Log().Error("decoding message: ", err)

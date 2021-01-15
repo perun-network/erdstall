@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/perun-network/erdstall/client"
 	"github.com/perun-network/erdstall/config"
@@ -120,7 +119,7 @@ func setup(t *testing.T, honesty *op.Config, numClients int) (operator *op.Opera
 	operator = startOp(honesty)
 	// Start clients.
 	for i := 0; i < numClients; i++ {
-		client, err := startClient(i, operator.EnclaveParams().Contract)
+		client, err := startClient(i)
 		time.Sleep(3 * time.Second) // wait for chain connection
 		require.NoError(t, err)
 		clients = append(clients, client)
@@ -148,19 +147,21 @@ func filterStatus(t pkgtest.ConcT) chan *client.CmdStatus {
 	return status
 }
 
-func startClient(index int, contract common.Address) (*client.Client, error) {
+func startClient(index int) (*client.Client, error) {
 	cfg := config.ClientConfig{
-		ChainURL:     ethUrl,
 		OpHost:       "127.0.0.1",
 		OpPort:       rpcPort,
 		Mnemonic:     mnemonic,
 		AccountIndex: index + 2,
-		Contract:     contract.String(),
 		UserName:     fmt.Sprintf("client-%d", index),
+	}
+	rpc, err := client.NewRPC(cfg.OpHost, uint16(cfg.OpPort))
+	if err != nil {
+		return nil, err
 	}
 
 	wallet := wallet.NewWallet(cfg.Mnemonic, uint(cfg.AccountIndex)) // HD Wallet
-	eb, err := ethclient.Dial(cfg.ChainURL)
+	eb, err := ethclient.Dial(ethUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -174,13 +175,9 @@ func startClient(index int, contract common.Address) (*client.Client, error) {
 	}()
 
 	cb := perunchannel.NewContractBackend(eb, perunhd.NewTransactor(wallet.Wallet.Wallet()))
-	rpc, err := client.NewRPC(cfg.OpHost, uint16(cfg.OpPort))
-	if err != nil {
-		return nil, err
-	}
 	chain := eth.NewClient(cb, wallet.Acc.Account) // ETHChain conn
 	log.Info(cfg.UserName, " address: ", wallet.Acc.Address())
-	client := client.NewClient(cfg, rpc, events, chain, wallet)
+	client := client.NewClient(cfg, rpc.ClientCfg(), rpc, events, chain, wallet)
 	go func() {
 		if err := client.Run(); err != nil {
 			log.Info("client stopped: ", err)

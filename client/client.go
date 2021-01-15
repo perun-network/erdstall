@@ -25,6 +25,7 @@ import (
 	"github.com/perun-network/erdstall/config"
 	"github.com/perun-network/erdstall/contracts/bindings"
 	"github.com/perun-network/erdstall/eth"
+	"github.com/perun-network/erdstall/operator"
 	"github.com/perun-network/erdstall/tee"
 )
 
@@ -32,6 +33,7 @@ type Client struct {
 	psync.Closer
 	// Initialized in NewClient
 	Config       config.ClientConfig
+	OpConfig     operator.ClientConfig
 	conn         *RPC
 	proofSub     *Subscription
 	ethClient    *eth.Client
@@ -133,21 +135,23 @@ type CmdStatus struct {
 	War string // Warning
 }
 
-func NewClient(cfg config.ClientConfig, conn *RPC, events chan *Event, ethClient *eth.Client, signer tee.TextSigner) *Client {
-	addr, err := strToCommonAddress(cfg.Contract)
-	if err != nil {
-		panic(err)
-	}
+func NewClient(cfg config.ClientConfig, ccfg operator.ClientConfig, conn *RPC, events chan *Event, ethClient *eth.Client, signer tee.TextSigner) *Client {
 	return &Client{
 		Config:       cfg,
+		OpConfig:     ccfg,
 		conn:         conn,
 		ethClient:    ethClient,
-		contractAddr: addr,
+		contractAddr: ccfg.Contract,
 		signer:       signer,
 		txNonce:      1,
 		balances:     make(map[uint64]EpochBalance),
 		events:       events,
 	}
+}
+
+// ChainURL returns the URL of the blockchain the client is connected to.
+func (c *Client) ChainURL() string {
+	return c.Config.ChainURL(c.OpConfig.NetworkID)
 }
 
 func (c *Client) Run() error {
