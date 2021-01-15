@@ -53,6 +53,12 @@ type (
 		Proof tee.BalanceProof `json:"proof"`
 	}
 
+	// TXReceipt notifies a peer that he received a new transaction.
+	TXReceipt struct {
+		Result
+		TX tee.Transaction `json:"tx"`
+	}
+
 	// Method describes a method to RPC call.
 	Method string
 	// Topic describes a topic to RPC subscribe on.
@@ -67,6 +73,7 @@ const (
 
 	BalanceProofs Topic = "balanceProofs"
 	DepositProofs Topic = "depositProofs"
+	TXReceipts    Topic = "txReceipts"
 )
 
 // NewSendTx returns a `SendTx` object.

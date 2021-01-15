@@ -28,6 +28,7 @@ type Operator struct {
 	EthClient *eth.Client
 	*depositProofs
 	*balanceProofs
+	TxReceipts  *txReceipts
 	rpcOperator *RPCOperator
 	contract    *bindings.Erdstall
 	cfg         Config
@@ -50,15 +51,18 @@ func New(
 		return nil, fmt.Errorf("loading contract: %w", err)
 	}
 
-	return &Operator{
+	op := &Operator{
 		enclave:       enclave,
 		params:        params,
 		EthClient:     client,
 		depositProofs: newDepositProofs(),
 		balanceProofs: newBalanceProofs(),
+		TxReceipts:    newTXReceipts(),
 		contract:      _contract,
 		cfg:           cfg,
-	}, nil
+	}
+	op.OnClose(func() { close(op.TxReceipts.closed) })
+	return op, nil
 }
 
 // SetupWithPrototypeEnclave creates an operator from the given configuration
@@ -175,7 +179,7 @@ func (operator *Operator) Serve(port uint16) error {
 	})
 	log.Info("Operator.Serve: Enclave running")
 
-	operator.rpcOperator = NewRPCOperator(operator.enclave)
+	operator.rpcOperator = NewRPCOperator(operator.enclave, operator.TxReceipts)
 
 	var netIDStr string
 	if netID, err := operator.EthClient.NetworkID(); err != nil {

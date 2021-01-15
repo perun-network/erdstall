@@ -65,7 +65,7 @@ type (
 		connMtx sync.Mutex // protects conn.
 		conn    *gorilla.Conn
 
-		sub *ProofSub
+		sub *ClientSub
 	}
 )
 
@@ -235,6 +235,13 @@ func (p *Peer) subscribe(who common.Address) error {
 						Topic: wire.BalanceProofs,
 					},
 					Proof: proof,
+				}
+			case tx := <-p.sub.Receipts():
+				update = &wire.TXReceipt{
+					Result: wire.Result{
+						Topic: wire.TXReceipts,
+					},
+					TX: tx,
 				}
 			case <-p.sub.Closed():
 				p.Log().Debug("Subscription routine returns due to closed sub.")

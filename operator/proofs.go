@@ -64,3 +64,25 @@ func (bps *balanceProofs) AddAll(in []*tee.BalanceProof) {
 		bps.entries[bp.Balance.Account] = bp
 	}
 }
+
+type txReceipts struct {
+	mu      sync.Mutex
+	entries map[common.Address][]chan tee.Transaction
+	closed  chan struct{}
+}
+
+func newTXReceipts() *txReceipts {
+	return &txReceipts{
+		entries: make(map[common.Address][]chan tee.Transaction),
+		closed:  make(chan struct{}),
+	}
+}
+
+func (trs *txReceipts) AddPeer(addr common.Address) chan tee.Transaction {
+	trs.mu.Lock()
+	defer trs.mu.Unlock()
+
+	ch := make(chan tee.Transaction, 1)
+	trs.entries[addr] = append(trs.entries[addr], ch)
+	return ch
+}
