@@ -31,8 +31,6 @@ func (e *Enclave) epochProcessor(
 		depExErr     = make(chan error)
 		txErr        = make(chan error)
 	)
-	// push first epoch
-	e.epochs.Push(depositEpoch)
 
 	defer close(e.done) // Signal to external callers that Enclave processor is done.
 	for {
@@ -179,7 +177,7 @@ func (e *Enclave) depositExitRoutine(
 		vbr.result <- nil
 
 		exiters = append(exiters, exs...)
-		if e.params.IsLastPhaseBlock(vb.NumberU64()) {
+		if e.Params().IsLastPhaseBlock(vb.NumberU64()) {
 			log.Debug("depositExitRoutine: last block of phase, pushing deposit proofs and return")
 			e.pushDepositProofs()
 			exits <- exiters // phase done, sending exiters to TX processor.
@@ -283,7 +281,6 @@ func (e *Enclave) processEpochShift(depositEpoch, txEpoch, exitEpoch **Epoch) {
 	*txEpoch = (*depositEpoch).merge(*txEpoch)
 	*depositEpoch = (*txEpoch).NewNext()
 	log.Tracef("epochProc: pushing new deposit epoch: %d", (*depositEpoch).Number)
-	e.epochs.Push(*depositEpoch)
 	log.Tracef("epochProc: epochs shifted, new deposit epoch: %d", (*depositEpoch).Number)
 }
 
@@ -397,7 +394,7 @@ func (e *Enclave) applyEpochExit(ep *Epoch, exLogs []*types.Log) (exitersSet, er
 
 // applyEpochTx adjusts `e.balances` according to given transactions.
 func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
-	const LT = -1
+	const LESS = -1
 
 	if valid, err := tee.VerifyTransaction(e.params.Contract, *tx); err != nil {
 		return fmt.Errorf("verifying tx signature: %w", err)
@@ -418,7 +415,7 @@ func (e *Enclave) applyEpochTx(ep *Epoch, tx *tee.Transaction) error {
 		return fmt.Errorf("unknown sender: %x", tx.Sender)
 	case !okr:
 		return fmt.Errorf("unknown recipient: %x", tx.Recipient)
-	case sender.Value.Cmp((*big.Int)(tx.Amount)) == LT:
+	case LESS == sender.Value.Cmp((*big.Int)(tx.Amount)):
 		return fmt.Errorf("tx amount exceeds senders balance: has: %v, needs: %v", sender.Value, tx.Amount)
 	case tx.Nonce != sender.Nonce+1:
 		return fmt.Errorf("sender tx nonce: %v, expected %v", tx.Nonce, sender.Nonce+1)
