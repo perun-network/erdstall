@@ -49,7 +49,9 @@ func TestOperator(t *testing.T) {
 
 	// get deposit proofs
 	user1.DepositProof(ctx)
+	user1.BalanceProof(ctx)
 	user2.DepositProof(ctx)
+	user2.BalanceProof(ctx)
 	log.Info("operator_test.TestOperator: Retrieved deposit proofs")
 
 	// transfer from user1 to user2
