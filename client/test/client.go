@@ -170,7 +170,6 @@ func (c *Client) SendInvalidTxs(rng *rand.Rand, validRecipient common.Address) (
 // - Sig (random)
 // - Nonce (+-1)
 // - Epoch (+-1)
-// - Recipient (random)
 // - Sender (random)
 // - Amount (1 above max, -1)
 // The remaining fields are set to a valid value.
@@ -194,10 +193,6 @@ func (c *Client) InvalidTxs(rng *rand.Rand, validRecipient common.Address) (txs 
 		},
 		func(tx *tee.Transaction) {
 			tx.Epoch -= 1
-			c.SignTx(tx)
-		},
-		func(tx *tee.Transaction) {
-			tx.Recipient = eth.NewRandomAddress(rng)
 			c.SignTx(tx)
 		},
 		func(tx *tee.Transaction) {
