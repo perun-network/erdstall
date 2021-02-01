@@ -113,7 +113,7 @@ func GenericEnclaveTest(t *testing.T, enc tee.Enclave) {
 
 	bps, err := enc.BalanceProofs()
 	requiree.NoError(err)
-	assert.Len(bps, 0)
+	assert.Len(bps, 2)
 
 	// now: deposit epoch: 1, tx epoch: 0
 
@@ -159,17 +159,23 @@ func GenericEnclaveTest(t *testing.T, enc tee.Enclave) {
 		doWith(bp, alice.Exit, bob.Exit)
 	}
 
+	seal("exitPhase", 1)
+	bpsExit, err := enc.BalanceProofs()
+	requiree.NoError(err)
+	requiree.Len(bpsExit, 2, "users should still be in the system (exit locked)")
+	dps, err = enc.DepositProofs()
+	requiree.Len(dps, 0)
+	requiree.NoError(err)
+
 	// Signalling the enclave to stop now, so that it doesn't start new epochs on
 	// the next block.
 	testLog("Set Enclave to shutdown after next phase.")
 	enc.Shutdown()
-
-	seal("exitPhase", 1)
-
+	seal("exitLockedPhase", params.PhaseDuration)
 	// Check balance proofs after all users exited.
 	// This also serves as a synchronization point so that enough blocks are
 	// processed by the enclave before the block subscription is closed.
-	bpsExit, err := enc.BalanceProofs()
+	bpsExit, err = enc.BalanceProofs()
 	requiree.NoError(err)
 	requiree.Len(bpsExit, 0, "all users should have exited the system")
 

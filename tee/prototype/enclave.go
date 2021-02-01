@@ -3,7 +3,6 @@
 package prototype
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -16,113 +15,168 @@ import (
 )
 
 type (
+	// State contains all essential enclave state.
+	State struct {
+		Params *tee.Parameters // The fixed enclave parameters.
+
+		Epoch         tee.Epoch   // The current epoch.
+		LastBlock     uint64      // The last known block height.
+		LastBlockHash common.Hash // The last known block's hash.
+
+		Accounts map[common.Address]*Acc // The users' accounts.
+	}
+
 	Enclave struct {
-		params  tee.Parameters
+		params *tee.Parameters // The enclave's parameters.
+		*State                 // The enclave's essential state.
+
+		account *accounts.Account
 		wallet  accounts.Wallet
-		account accounts.Account
 
-		bc     blockchain // TODO: do we need? we process on the fly...
-		epochs epochchain
+		chain blockchain
+		epoch *Epoch // Epoch manager, nil until first block is known.
 
-		// incoming data
-		newBlocks chan blockReq
-		newTXs    chan txReq
+		// Incoming commands are queued here to be executed in order.
+		commands chan command
 
-		// outgoing data
+		// Outgoing data: these proofs have to be consumed within one epoch.
 		depositProofs chan []*tee.DepositProof
 		balanceProofs chan []*tee.BalanceProof
 
 		// cache
-		depositProofCache map[common.Address]*tee.DepositProof
+		depositProofCache []*tee.DepositProof // Accumulated until phase shift.
 
-		running   atomic.Bool   // if false, signals processors to return after sealing epoch
-		done      chan struct{} // signal by epoch processor that it is done
-		blockFail chan struct{} // signal by block processor that it failed
-	}
-
-	blockReq struct {
-		block  *tee.Block
-		result chan<- error
-	}
-
-	txReq struct {
-		tx     *tee.Transaction
-		result chan<- error
+		// Running/stopping
+		shutdownRequested bool // User requested shutdown.
+		shutdownApproved  bool // Enclave wants to shut down.
+		running           atomic.Bool
+		stopped           chan struct{} //
 	}
 )
 
 var _ (tee.Enclave) = (*Enclave)(nil) // compile-time check
 
-const (
-	// TODO: do we even want buffering? It may also be ok if ProcessX calls block.
-	bufSizeBlocks = 0 // incoming blocks buffer size
-	bufSizeTXs    = 0 // incoming tx buffer size
-	bufSizeProofs = 1 // proofs buffer size in #epochs
-)
+// enclaveMaxCommandQueue is the number of commands that can be enqueued to the
+// enclave simultaneously. Once this number is surpassed, it is no longer
+// possible to ensure a FIFO execution of commands, and excess commands will
+// result in an error.
+const enclaveMaxCommandQueue = 256 // for good measure.
 
 func NewEnclave(wallet accounts.Wallet) *Enclave {
 	return &Enclave{
-		wallet:            wallet,
-		newBlocks:         make(chan blockReq, bufSizeBlocks),
-		newTXs:            make(chan txReq, bufSizeTXs),
-		depositProofs:     make(chan []*tee.DepositProof, bufSizeProofs),
-		balanceProofs:     make(chan []*tee.BalanceProof, bufSizeProofs),
-		depositProofCache: make(map[common.Address]*tee.DepositProof),
-		done:              make(chan struct{}),
-		blockFail:         make(chan struct{}),
+		wallet:        wallet,
+		chain:         blockchain{},
+		commands:      make(chan command, enclaveMaxCommandQueue),
+		depositProofs: make(chan []*tee.DepositProof, 1),
+		balanceProofs: make(chan []*tee.BalanceProof, 1),
+		stopped:       make(chan struct{}),
 	}
 }
 
 func NewEnclaveWithAccount(wallet accounts.Wallet, account accounts.Account) *Enclave {
 	e := NewEnclave(wallet)
-	e.account = account
+	e.account = &account
 	return e
 }
 
-// Run starts the enclave routines and blocks until they return. If any
-// routine fails, it returns its error immediately.
-//
-// Run must be called after Init.
-//
-// Run can be stopped by calling Shutdown. However, Run will process blocks and
-// transactions until the current phase has finished.
-func (e *Enclave) Run(params tee.Parameters) error {
-	if !e.running.TrySet() {
-		log.Panic("Enclave already running")
+func (e *Enclave) BlockNum() uint64 {
+	return e.chain.Head().NumberU64()
+}
+
+func (e *Enclave) IsAtPhaseEnd() bool {
+	if e.chain.empty() {
+		return false
 	}
+	return e.params.IsLastPhaseBlock(e.BlockNum())
+}
 
-	if err := e.setParams(params); err != nil {
-		return err
-	}
-
-	var (
-		verifiedBlocks = make(chan blockReq, bufSizeBlocks) // connects the block and epoch processors
-		blockErr       = make(chan error)
-		epochErr       = make(chan error)
-		numProcs       = 2
-	)
-
-	go func() {
-		blockErr <- e.blockProcessor(e.newBlocks, verifiedBlocks)
-	}()
-	go func() {
-		epochErr <- e.epochProcessor(verifiedBlocks, e.newTXs)
-	}()
-
-	for numProcs != 0 {
-		select {
-		case err := <-blockErr:
-			if err != nil {
-				return fmt.Errorf("block processor: %w", err)
-			}
-		case err := <-epochErr:
-			if err != nil {
-				return fmt.Errorf("epoch processor: %w", err)
-			}
+func (e *Enclave) mainLoop() (err error) {
+	panicked := true
+	defer func() {
+		if panicked {
+			err = fmt.Errorf("panic: %v", recover())
 		}
-		numProcs--
+	}()
+
+	for cmd := range e.commands {
+		switch cmd := cmd.(type) {
+		case *processBlocksCmd:
+			errs := make([]error, len(cmd.blocks))
+			for i, b := range cmd.blocks {
+				errs[i] = e.processBlock(b)
+			}
+			cmd.result <- errs
+		case *processTxsCmd:
+			errs := make([]error, len(cmd.txs))
+			for i, tx := range cmd.txs {
+				errs[i] = e.epoch.ProcessTx(e.Params.Contract, tx)
+			}
+			cmd.result <- errs
+		case *shutdownCmd:
+			e.shutdownRequested = true
+		default:
+			log.Panicf("unhandled command type %T", cmd)
+		}
+
+		if e.shutdownApproved {
+			break
+		}
 	}
-	return nil
+	panicked = false
+	return
+}
+
+// ProcessBlocks instantaneously processes a list of blocks. If any of the
+// blocks are erroneous, they are simply ignored, without affecting the rest of
+// the blocks. Returns the accumulated error messages.
+func (e *Enclave) ProcessBlocks(blocks ...*tee.Block) error {
+	if e.shutdownApproved {
+		return tee.ErrEnclaveStopped
+	}
+
+	errCh := make(chan []error, 1)
+	select {
+	case e.commands <- &processBlocksCmd{blocks: blocks, result: errCh}:
+		select {
+		case errs := <-errCh:
+			errg := perrors.NewGatherer()
+			for _, e := range errs {
+				errg.Add(e)
+			}
+			return errg.Err()
+		case <-e.stopped:
+			return tee.ErrEnclaveStopped
+		}
+	case <-e.stopped:
+		return tee.ErrEnclaveStopped
+	}
+}
+
+// ProcessTXs should be called by the Operator whenever they receive new
+// transactions from users. After a transaction epoch has finished and an
+// additional k blocks made known to the Enclave, the epoch's balance proofs
+// can be received by calling BalanceProofs.
+func (e *Enclave) ProcessTXs(txs ...*tee.Transaction) error {
+	if e.shutdownApproved {
+		return tee.ErrEnclaveStopped
+	}
+
+	errCh := make(chan []error, 1)
+	select {
+	case e.commands <- &processTxsCmd{txs: txs, result: errCh}:
+		select {
+		case errs := <-errCh:
+			errg := perrors.NewGatherer()
+			for _, e := range errs {
+				errg.Add(e)
+			}
+			return errg.Err()
+		case <-e.stopped:
+			return tee.ErrEnclaveStopped
+		}
+	case <-e.stopped:
+		return tee.ErrEnclaveStopped
+	}
 }
 
 // Shutdown lets the Enclave gracefully shutdown after the next phase is sealed. It
@@ -133,81 +187,11 @@ func (e *Enclave) Run(params tee.Parameters) error {
 // the Enclave shut down.
 func (e *Enclave) Shutdown() {
 	log.Info("Enclave: shutting down when phase is finished")
-	if !e.running.TryUnset() {
-		log.Panic("Enclave not running")
+	select {
+	case e.commands <- &shutdownCmd{}:
+	case <-e.stopped:
+		log.Panic("Shutdown has been called multiple times")
 	}
-}
-
-// Init initializes the enclave, generating a new secp256k1 ECDSA key and
-// storing it as the enclave's signing key.
-//
-// It returns the public key derived Ethereum address and attestation of
-// correct initialization of the enclave with the generated address. The
-// attestation can be used to verify the enclave with the TEE vendor.
-//
-// The Operator must deploy the contract with the Enclave's address after
-// calling Init.
-func (e *Enclave) Init() (tee common.Address, _ []byte, err error) {
-	if e.account.Address != tee {
-		return e.account.Address, nil, nil
-	}
-	e.account, err = e.wallet.Derive(accounts.DefaultRootDerivationPath, true)
-	if err != nil {
-		return
-	}
-	return e.account.Address, nil, nil
-}
-
-func (e *Enclave) setParams(p tee.Parameters) error {
-	if p.TEE != e.account.Address {
-		return errors.New("tee address mismatch")
-	}
-	e.params = p
-	return nil
-}
-
-// ProcessBlocks should be called by the Operator to cause the enclave to
-// process the given block(s), logging deposits and exits.
-//
-// Note that BalanceProofs requires an additional k blocks to be known to
-// the Enclave before it reveals an epoch's balance proofs to the operator.
-// k is a security parameter to guarantee enough PoW depth.
-func (e *Enclave) ProcessBlocks(blocks ...*tee.Block) error {
-	err := make(chan error, len(blocks))
-	for _, b := range blocks {
-		select {
-		case e.newBlocks <- blockReq{b, err}:
-		case <-e.done:
-			return tee.ErrEnclaveStopped
-		}
-	}
-
-	errg := perrors.NewGatherer()
-	for range blocks {
-		errg.Add(<-err)
-	}
-	return errg.Err()
-}
-
-// ProcessTXs should be called by the Operator whenever they receive new
-// transactions from users. After a transaction epoch has finished and an
-// additional k blocks made known to the Enclave, the epoch's balance proofs
-// can be received by calling BalanceProofs.
-func (e *Enclave) ProcessTXs(txs ...*tee.Transaction) error {
-	err := make(chan error)
-	for _, tx := range txs {
-		select {
-		case e.newTXs <- txReq{tx, err}:
-		case <-e.done:
-			return tee.ErrEnclaveStopped
-		}
-	}
-
-	errg := perrors.NewGatherer()
-	for range txs {
-		errg.Add(<-err)
-	}
-	return errg.Err()
 }
 
 // DepositProofs returns the deposit proofs of all deposits made in an epoch
@@ -222,7 +206,7 @@ func (e *Enclave) DepositProofs() ([]*tee.DepositProof, error) {
 	select {
 	case dps := <-e.depositProofs:
 		return dps, nil
-	case <-e.done:
+	case <-e.stopped:
 		return nil, tee.ErrEnclaveStopped
 	}
 }
@@ -239,7 +223,7 @@ func (e *Enclave) BalanceProofs() ([]*tee.BalanceProof, error) {
 	select {
 	case bps := <-e.balanceProofs:
 		return bps, nil
-	case <-e.done:
+	case <-e.stopped:
 		return nil, tee.ErrEnclaveStopped
 	}
 }
