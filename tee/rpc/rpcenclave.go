@@ -42,7 +42,7 @@ func (re *RPCEnclave) Close() error {
 }
 
 func (re *RPCEnclave) Run(p tee.Parameters) error {
-	return re.client.Call("Server.Run", p, &Void{})
+	return getErr(re.client.Call("Server.Run", p, &Void{}))
 }
 
 func (re *RPCEnclave) Shutdown() {
@@ -54,27 +54,34 @@ func (re *RPCEnclave) Shutdown() {
 func (re *RPCEnclave) Init() (common.Address, []byte, error) {
 	var res TeeInitRes
 	err := re.client.Call("Server.Init", &Void{}, &res)
-	return res.Addr, res.Sig, err
+	return res.Addr, res.Sig, getErr(err)
 }
 
 func (re *RPCEnclave) ProcessBlocks(blocks ...*tee.Block) error {
-	return re.client.Call("Server.ProcessBlocks", blocks, &Void{})
+	return getErr(re.client.Call("Server.ProcessBlocks", blocks, &Void{}))
 }
 
 func (re *RPCEnclave) ProcessTXs(txs ...*tee.Transaction) error {
-	return re.client.Call("Server.ProcessTXs", &txs, &Void{})
+	return getErr(re.client.Call("Server.ProcessTXs", &txs, &Void{}))
 }
 
 func (re *RPCEnclave) DepositProofs() (res []*tee.DepositProof, err error) {
-	err = re.client.Call("Server.DepositProofs", Void{}, &res)
+	err = getErr(re.client.Call("Server.DepositProofs", Void{}, &res))
 	return
 }
 
 func (re *RPCEnclave) BalanceProofs() (res []*tee.BalanceProof, err error) {
-	err = re.client.Call("Server.BalanceProofs", Void{}, &res)
+	err = getErr(re.client.Call("Server.BalanceProofs", Void{}, &res))
 	return
 }
 
 func (re *RPCEnclave) Stop() error {
-	return re.client.Call("Server.Stop", Void{}, &Void{})
+	return getErr(re.client.Call("Server.Stop", Void{}, &Void{}))
+}
+
+func getErr(err error) error {
+	if err != nil && err.Error() == tee.ErrEnclaveStopped.Error() {
+		return tee.ErrEnclaveStopped
+	}
+	return err
 }
